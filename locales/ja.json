@@ -1,0 +1,22 @@
+{
+  "plugin_name": "Logitech MX Ergo",
+  "connected": "接続済み",
+  "disconnected": "スリープ / 切断",
+  "battery": "バッテリー",
+  "battery_level": "レベル",
+  "battery_full": "十分 (Full)",
+  "battery_normal": "標準 (Normal)",
+  "battery_low": "低下 (Low)",
+  "battery_critical": "要充電 (Critical)",
+  "battery_unknown": "不明",
+  "hardware_status": "デバイスステータス",
+  "hardware_precision_info": "プレシジョンモードはトラックボール横の物理ボタンで切り替えます。",
+  "pointer_settings": "ポインター & HYPRLAND",
+  "sensitivity": "感度",
+  "accel_profile": "加速プロファイル",
+  "accel_adaptive": "アダプティブ",
+  "accel_flat": "フラット (リニア)",
+  "natural_scroll": "ナチュラルスクロール",
+  "mac_address": "MAC アドレス",
+  "device_name": "デバイス"
+}

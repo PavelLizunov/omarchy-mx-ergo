@@ -1,0 +1,22 @@
+{
+  "plugin_name": "Logitech MX Ergo",
+  "connected": "Подключено",
+  "disconnected": "Ожидание / Сон",
+  "battery": "Аккумулятор",
+  "battery_level": "Уровень",
+  "battery_full": "Заряжен (Full)",
+  "battery_normal": "В норме (Normal)",
+  "battery_low": "Низкий (Low)",
+  "battery_critical": "Критический (Critical)",
+  "battery_unknown": "Неизвестно",
+  "hardware_status": "СТАТУС УСТРОЙСТВА",
+  "hardware_precision_info": "Точный режим (Precision Mode) управляется аппаратной кнопкой возле шара.",
+  "pointer_settings": "УКАЗАТЕЛЬ И HYPRLAND",
+  "sensitivity": "Чувствительность",
+  "accel_profile": "Профиль ускорения",
+  "accel_adaptive": "Адаптивный",
+  "accel_flat": "Линейный (Flat)",
+  "natural_scroll": "Естественная прокрутка",
+  "mac_address": "MAC-адрес",
+  "device_name": "Устройство"
+}

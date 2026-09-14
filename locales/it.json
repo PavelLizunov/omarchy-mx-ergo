@@ -1,0 +1,22 @@
+{
+  "plugin_name": "Logitech MX Ergo",
+  "connected": "Connesso",
+  "disconnected": "Sospensione / Disconnesso",
+  "battery": "Batteria",
+  "battery_level": "Livello",
+  "battery_full": "Carica (Full)",
+  "battery_normal": "Normale (Normal)",
+  "battery_low": "Bassa (Low)",
+  "battery_critical": "Critica (Critical)",
+  "battery_unknown": "Sconosciuto",
+  "hardware_status": "STATO DEL DISPOSITIVO",
+  "hardware_precision_info": "La modalità di precisione è controllata dal pulsante fisico accanto alla trackball.",
+  "pointer_settings": "PUNTATORE E HYPRLAND",
+  "sensitivity": "Sensibilità",
+  "accel_profile": "Profilo di accelerazione",
+  "accel_adaptive": "Adattivo",
+  "accel_flat": "Lineare (Flat)",
+  "natural_scroll": "Scorrimento naturale",
+  "mac_address": "Indirizzo MAC",
+  "device_name": "Dispositivo"
+}

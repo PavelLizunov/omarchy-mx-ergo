@@ -1,0 +1,22 @@
+{
+  "plugin_name": "Logitech MX Ergo",
+  "connected": "已连接",
+  "disconnected": "休眠 / 已断开",
+  "battery": "电池",
+  "battery_level": "电量等级",
+  "battery_full": "充足 (Full)",
+  "battery_normal": "正常 (Normal)",
+  "battery_low": "偏低 (Low)",
+  "battery_critical": "极低 (Critical)",
+  "battery_unknown": "未知",
+  "hardware_status": "设备状态",
+  "hardware_precision_info": "精准模式由轨迹球旁边的实体按键控制。",
+  "pointer_settings": "指针与 HYPRLAND",
+  "sensitivity": "灵敏度",
+  "accel_profile": "加速配置文件",
+  "accel_adaptive": "自适应",
+  "accel_flat": "线性 (Flat)",
+  "natural_scroll": "自然滚动",
+  "mac_address": "MAC 地址",
+  "device_name": "设备"
+}
