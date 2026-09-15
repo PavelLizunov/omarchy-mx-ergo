@@ -7,29 +7,31 @@ Start with the row matching the component to inspect or modify. Read the listed 
 | Component | Role | Consumer / Check |
 | --- | --- | --- |
 | `BarWidget.qml` | Entry point for Omarchy Quattro bar. Hosts compact status icon, percentage text, and `KeyboardPanel` popup card. | `manifest.json`; `tests/run.sh`, `qmllint` |
-| `ErgoModel.qml` | Single state owner. Reactive bindings to `Quickshell.Bluetooth` and `Quickshell.Services.UPower`. Throttles and executes Hyprland 0.56.2 Lua commands via discrete `Process` argv. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
-| `ErgoPanel.qml` | Interactive popup card. Displays connection badge, battery progress bar, MAC address, hardware notes, and pointer controls. Includes full keyboard traversal. | `BarWidget.qml`; `qmllint`, visual review |
+| `ErgoModel.qml` | Single state owner. Native Linux `hid-logitech-hidpp` sysfs driver integration, BlueZ BLE, UPower, button mappings, and Hyprland pointer controls. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
+| `ErgoPanel.qml` | Interactive popup card. Displays connection badge, battery progress bar, MAC address, button mapping controls, and pointer controls. Includes full keyboard traversal. | `BarWidget.qml`; `qmllint`, visual review |
 | `I18n.js` | Internationalization dictionary and helper. Bundles 10 languages (`en`, `ru`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`) with fallback. | `ErgoModel.qml`, `ErgoPanel.qml`; `tests/i18n-completeness.js` |
 | `locales/` | Standardized localization catalogs in JSON format with `index.json`. | `I18n.js`; `tests/i18n-completeness.js` |
 
 ## Data Flow & Invariants
 
 ```
-[BlueZ D-Bus GATT]   --> Quickshell.Bluetooth       \
-                                                     --> ErgoModel.qml (Single Owner)
-[UPower D-Bus HID++] --> Quickshell.Services.UPower /          |
-                                                               | (Reactive QML bindings)
-                                                               v
-                                                      [BarWidget & ErgoPanel]
-                                                               |
-                                                               | (Debounced 250ms User Input)
-                                                               v
-                                                      [hyprctl eval 'hl.device(...)']
+[Linux hid-logitech-hidpp sysfs] --> driverReader Process \
+[BlueZ D-Bus GATT]               --> Quickshell.Bluetooth  --> ErgoModel.qml (Single Owner)
+[UPower D-Bus HID++]             --> Quickshell.Services.UPower /    |
+                                                                     | (Reactive QML bindings)
+                                                                     v
+                                                           [BarWidget & ErgoPanel]
+                                                                     |
+                                                                     | (Hyprland Lua Dispatch)
+                                                                     v
+                                                           [hyprctl eval 'hl.device(...) / o.bind(...)']
 ```
 
-1. **Reactive, Zero-Polling Telemetry:** BlueZ GATT Battery Service (`org.bluez.Battery1`) and UPower (`battery_hidpp_8`) emit D-Bus property changes directly into Quickshell C++ models. Zero timer polling in the background.
+1. **Linux Driver Telemetry:** Kernel driver `hid-logitech-hidpp` exports `/sys/class/power_supply/hidpp_battery_*` with discrete `capacity_level` and `status`. Telemetry is read directly with fallback to UPower and BlueZ.
 2. **Strict Uncertainty Handling:** When disconnected, battery percentage evaluates strictly to `null`. It is NEVER coerced to 0% or false.
-3. **Hyprland Device Targeting:** Commands target `logitech-mx-ergo-multi-device-trackball-` specifically using `hl.device({ ... })` in Hyprland 0.56.2.
+3. **Dual Transport Support:** Automatically detects whether the trackball is connected via Bluetooth BLE (`046d:b01d`) or Logitech Unifying USB receiver (`046d:406f`).
+4. **Hardware Button Mapping:** Configures 5 buttons (`mouse:275`, `mouse:276`, `mouse:274`, `mouse:278`, `mouse:279`) with action dispatching into Hyprland Lua and config persistence.
+5. **Injection-Proof Execution:** Discrete `argv` execution without shell string interpolation; strict JSON stringification for Lua literals and MAC regex validation.
 
 ## Test Infrastructure
 

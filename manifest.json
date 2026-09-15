@@ -25,9 +25,16 @@
       "hideWhenDisconnected": false,
       "sensitivity": 0.0,
       "accelProfile": "adaptive",
-      "naturalScroll": false
+      "naturalScroll": false,
+      "locale": "system"
     },
     "schema": [
+      {
+        "key": "locale",
+        "type": "string",
+        "label": "Interface language",
+        "defaultValue": "system"
+      },
       {
         "key": "showPercentage",
         "type": "boolean",

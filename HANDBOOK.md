@@ -3,31 +3,30 @@
 ## 1. Hardware Profile
 
 - **Device:** Logitech MX Ergo Wireless Trackball.
-- **Transport:** Bluetooth Low Energy (BLE).
-- **Bluetooth ID:** `046D:B01D` (`usb:v046DpB01Dd0025`), BD_ADDR `C2:B5:BB:BB:64:FF`.
-- **Kernel Drivers:** `uhid` -> `hid-logitech-hidpp` (`HID++ 4.5 device connected.`).
-- **Power Supply Node:** `/sys/class/power_supply/hidpp_battery_8` (`POWER_SUPPLY_CAPACITY_LEVEL=Full`).
+- **Transports:**
+  - Bluetooth Low Energy (BLE, `046D:B01D`, `usb:v046DpB01Dd0025`).
+  - Logitech Unifying Receiver (USB Dongle, `046D:406F`).
+- **Kernel Drivers:** `uhid` / `usbhid` -> `hid-logitech-hidpp` (`HID++ 4.5 device connected.`).
+- **Power Supply Node:** `/sys/class/power_supply/hidpp_battery_*` (`POWER_SUPPLY_CAPACITY_LEVEL=Full|Normal|Low|Critical`, `POWER_SUPPLY_STATUS=Discharging|Charging`).
 
-## 2. Telemetry Architecture (Pattern A)
+## 2. Telemetry Architecture (Linux Driver Grounding)
 
-Rather than spawning periodic CLI commands (`upower -i` or `bluetoothctl info`), the plugin integrates with Quickshell's native C++ D-Bus models:
-
-1. **`Quickshell.Bluetooth`:**
-   - Observes BlueZ `org.bluez.Device1` and `org.bluez.Battery1`.
-   - `batteryAvailable: bool`
-   - `battery: double` (0.0 to 1.0).
-   - `connected: bool`.
-2. **`Quickshell.Services.UPower`:**
-   - Observes `/org/freedesktop/UPower/devices/battery_hidpp_battery_8`.
-   - `percentage: double` (0.0 to 1.0).
-   - `isPresent: bool`.
+1. **Linux Kernel Driver `hid-logitech-hidpp` (`/sys/class/power_supply/hidpp_battery_*`):**
+   - Directly reflects hardware HID++ 4.5 battery events.
+   - `capacity_level`: `Full` (80-100%), `Normal` (20-80%), `Low` (5-20%), `Critical` (<5%).
+   - `status`: `Discharging`, `Charging`, `Full`.
+   - `serial_number`: device hardware address.
+2. **`Quickshell.Bluetooth` & `Quickshell.Services.UPower`:**
+   - Fallback signals and reactive connection lifecycle observers.
+3. **Dual Transport Resolution:**
+   - Automatically determines whether the connection is `ble` or `unifying`.
 
 ### Uncertainty Rules
 - Disconnected: `batteryFraction = null`, `batteryPercent = null`. The bar displays `󰍿` (trackball off/disconnected) and tooltip shows "Сон / Отключен".
-- Connected: Displays live battery level and icon (`󰁹` to `󰁺`).
+- Connected: Displays live battery level and icon (`󰁹` to `󰁺`, or `󰂄` when charging).
 - Zero Coercion Ban: Unknown battery is never displayed as 0%.
 
-## 3. Hyprland Pointer Integration (0.56.2+)
+## 3. Hyprland Pointer & Button Integration (0.56.2+)
 
 Hyprland 0.56.2 uses a Lua configuration engine where legacy `hyprctl keyword` is superseded by `hyprctl eval`.
 
@@ -41,10 +40,21 @@ hl.device({ name = "logitech-mx-ergo-multi-device-trackball-", accel_profile = "
 
 -- Natural Scrolling (true or false)
 hl.device({ name = "logitech-mx-ergo-multi-device-trackball-", natural_scroll = false })
+
+-- Button Binds (Back, Forward, Middle, Tilt Left, Tilt Right)
+pcall(function() hl.unbind("mouse:275") end)
+o.bind("mouse:275", "MX Ergo: Next Workspace", hl.dsp.focus({ workspace = "e+1" }))
+
+-- Tilt Left/Right bind both horizontal scroll (mouse_left/right) and discrete (mouse:278/279)
+pcall(function() hl.unbind("mouse_left") end)
+pcall(function() hl.unbind("mouse:278") end)
+o.bind("mouse_left", "MX Ergo: Prev Workspace", hl.dsp.focus({ workspace = "e-1" }))
+o.bind("mouse:278", "MX Ergo: Prev Workspace", hl.dsp.focus({ workspace = "e-1" }))
 ```
 
 ### Rate Limiting & Throttling
-- When the user drags the sensitivity slider, a single one-shot `Timer` (`applyDebounce`, 250ms) ensures that `hyprctl eval` is called at most once every quarter-second, preventing compositor IPC congestion.
+- When the user drags the sensitivity slider, a single one-shot `Timer` (`applyDebounce`, 250ms) ensures that `hyprctl eval` is called at most once every quarter-second.
+- Button and pointer changes are saved to `~/.config/omarchy/mx-ergo.json` (outside the watched plugin tree) via a debounced writer (500ms).
 
 ## 4. OpenDesign & Anti-Slop Implementation
 
