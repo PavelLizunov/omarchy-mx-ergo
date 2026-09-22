@@ -1,0 +1,373 @@
+#!/usr/bin/python3 -I
+"""Optional, root-owned Bluetooth profile helper. No network, daemon or plugin imports."""
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+
+HELPER = '/usr/local/libexec/omarchy-mx-ergo-bluetooth'
+VERSION = 1
+TARGET = {'min': 6, 'max': 9, 'power': 'on'}
+
+
+class ProfileError(Exception):
+    pass
+
+
+class Profile:
+    def __init__(self, root=Path('/'), owner=0):
+        # Alternative root/owner are for imported isolated tests, never CLI/env inputs.
+        self.root, self.owner = root, owner
+        self.store = self.path('/var/lib/omarchy-mx-ergo')
+        self.state_file = self.store / 'bluetooth.json'
+        self.rule = self.path('/etc/udev/rules.d/70-omarchy-mx-ergo-bluetooth.rules')
+        self.legacy_config = self.path('/etc/tmpfiles.d/bluetooth-low-latency.conf')
+        self.legacy_rule = self.path('/etc/udev/rules.d/50-bluetooth-performance.rules')
+
+    def path(self, name):
+        return self.root / name.lstrip('/')
+
+    def trusted(self, path, missing=False):
+        """Only root-owned ordinary files/directories, including all ancestors."""
+        current = self.root
+        for part in path.relative_to(self.root).parts:
+            current /= part
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                if missing:
+                    return
+                raise
+            if info.st_uid != self.owner or info.st_mode & 0o022 or not (
+                stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)
+            ):
+                raise ProfileError('Unsafe system path: ' + str(current))
+
+    def read(self, path, limit=8192):
+        with path.open() as stream:
+            data = stream.read(limit + 1)
+        if len(data) > limit:
+            raise ProfileError('Oversized system data')
+        return data
+
+    def atomic(self, path, text):
+        self.trusted(path, missing=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        self.trusted(path.parent)
+        fd, name = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
+        try:
+            with os.fdopen(fd, 'w') as stream:
+                os.fchmod(stream.fileno(), 0o644)
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(name, path)
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+
+    def save(self, data):
+        self.atomic(self.state_file, json.dumps(data, sort_keys=True) + '\n')
+
+    def state(self):
+        self.trusted(self.state_file, missing=True)
+        if not self.state_file.exists():
+            return None
+        data = json.loads(self.read(self.state_file))
+        if not isinstance(data, dict) or data.get('version') != VERSION:
+            raise ProfileError('Unsupported saved profile')
+        if data.get('phase') == 'legacy-cleanup':
+            if not re.fullmatch(r'[a-f0-9-]{36}', str(data.get('boot', ''))):
+                raise ProfileError('Invalid migration state')
+            return data
+        if data.get('phase') not in ('enabled', 'restore_pending'):
+            raise ProfileError('Invalid profile phase')
+        self.validate_identity(data.get('device'))
+        self.validate_values(data.get('original'))
+        return data
+
+    @staticmethod
+    def validate_identity(identity):
+        if not isinstance(identity, dict) or set(identity) != {'port', 'vendor', 'product', 'serial'}:
+            raise ProfileError('Invalid adapter identity')
+        if not re.fullmatch(r'[0-9]+-[0-9]+(?:\.[0-9]+)*', identity['port']):
+            raise ProfileError('Invalid USB port')
+        if any(not re.fullmatch(r'[a-fA-F0-9]{4}', identity[key]) for key in ('vendor', 'product')):
+            raise ProfileError('Invalid USB identity')
+        if not isinstance(identity['serial'], str) or len(identity['serial']) > 256:
+            raise ProfileError('Invalid USB serial')
+
+    @staticmethod
+    def validate_values(values):
+        if not isinstance(values, dict) or set(values) != {'min', 'max', 'power'}:
+            raise ProfileError('Invalid saved settings')
+        if any(type(values[key]) is not int for key in ('min', 'max')) or not (
+            6 <= values['min'] <= values['max'] <= 3200 and values['power'] in ('on', 'auto')
+        ):
+            raise ProfileError('Invalid interval or power setting')
+
+    def device(self, adapter):
+        if not re.fullmatch(r'hci[0-9]+', adapter):
+            raise ProfileError('Invalid Bluetooth adapter')
+        usb = (self.path('/sys/class/bluetooth') / adapter / 'device').resolve(strict=True)
+        devices = self.path('/sys/devices')
+        if not usb.is_relative_to(devices):
+            raise ProfileError('Adapter is outside sysfs devices')
+        while usb != devices and not (usb / 'idVendor').is_file():
+            usb = usb.parent
+        identity = {'port': usb.name, 'vendor': self.read(usb / 'idVendor', 16).strip(),
+                    'product': self.read(usb / 'idProduct', 16).strip(),
+                    'serial': self.read(usb / 'serial', 256).strip() if (usb / 'serial').exists() else ''}
+        self.validate_identity(identity)
+        return {'identity': identity, 'usb': usb,
+                'debug': self.path('/sys/kernel/debug/bluetooth') / adapter}
+
+    def find_device(self, identity):
+        matches = []
+        for path in self.path('/sys/class/bluetooth').glob('hci*'):
+            try:
+                device = self.device(path.name)
+                if device['identity'] == identity:
+                    matches.append(device)
+            except (OSError, ProfileError):
+                continue
+        if len(matches) > 1:
+            raise ProfileError('Ambiguous adapter identity')
+        return matches[0] if matches else None
+
+    def verify_device(self, device):
+        current = self.device(device['debug'].name)
+        if current['identity'] != device['identity'] or current['usb'] != device['usb']:
+            raise ProfileError('Adapter changed during the operation')
+
+    def values(self, device):
+        self.verify_device(device)
+        values = {key: int(self.read(device['debug'] / ('conn_' + key + '_interval'), 32))
+                  for key in ('min', 'max')}
+        values['power'] = self.read(device['usb'] / 'power/control', 16).strip()
+        self.validate_values(values)
+        return values
+
+    def write_values(self, device, values):
+        self.validate_values(values)
+        current = self.values(device)
+        # Expand the range before shrinking it; works for any valid original pair.
+        keys = ['max', 'min'] if values['max'] >= current['min'] else ['min', 'max']
+        for key in keys:
+            self.verify_device(device)
+            (device['debug'] / ('conn_' + key + '_interval')).write_text(str(values[key]) + '\n')
+        self.verify_device(device)
+        (device['usb'] / 'power/control').write_text(values['power'] + '\n')
+        if self.values(device) != values:
+            raise ProfileError('Controller did not retain the requested settings')
+
+    def rule_text(self):
+        # A bounded foreground helper validates the saved physical identity before writing.
+        return ('# Owned by omarchy-mx-ergo Bluetooth helper v1\n'
+                'ACTION=="add", SUBSYSTEM=="bluetooth", KERNEL=="hci[0-9]*", '
+                'RUN+="' + HELPER + ' --reapply %k"\n')
+
+    def check_rule(self):
+        self.trusted(self.rule, missing=True)
+        if self.rule.exists() and self.read(self.rule) != self.rule_text():
+            raise ProfileError('Unrecognized rule; refusing to overwrite it')
+
+    def remove_rule(self):
+        self.check_rule()
+        self.rule.unlink(missing_ok=True)
+
+    def reload_rules(self):
+        subprocess.run(['/usr/bin/udevadm', 'control', '--reload'], check=True,
+                       timeout=5, env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}, capture_output=True)
+
+    def legacy(self):
+        return self.legacy_config.exists() or self.legacy_rule.exists()
+
+    def boot(self):
+        return self.read(self.path('/proc/sys/kernel/random/boot_id'), 64).strip()
+
+    def status(self, adapter):
+        data = self.state()
+        result = {'version': VERSION, 'helperAvailable': True, 'configured': False,
+                  'canRestore': False, 'state': 'off'}
+        if self.legacy():
+            return dict(result, state='legacy')
+        if data and data['phase'] == 'legacy-cleanup':
+            return dict(result, state='restart' if data['boot'] == self.boot() else 'off')
+        if not data:
+            return result
+        result.update(configured=data['phase'] == 'enabled', canRestore=True)
+        if data['phase'] == 'restore_pending':
+            return dict(result, state='restore_pending')
+        device = self.find_device(data['device'])
+        if device is None:
+            return dict(result, state='unknown')
+        try:
+            self.check_rule()
+            applied = self.values(device) == TARGET and self.rule.exists()
+            return dict(result, state='applied' if applied else 'partial')
+        except (OSError, ValueError):
+            return dict(result, state='unknown')
+
+    @contextlib.contextmanager
+    def locked(self):
+        self.trusted(self.store, missing=True)
+        self.store.mkdir(parents=True, exist_ok=True, mode=0o755)
+        lock = self.store / 'lock'
+        self.trusted(lock, missing=True)
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ProfileError('Unsafe lock file')
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+        finally:
+            os.close(fd)
+
+    def enable(self, adapter):
+        if self.legacy():
+            raise ProfileError('Legacy profile must be removed explicitly first')
+        data = self.state()
+        if data and data['phase'] == 'legacy-cleanup':
+            if data['boot'] == self.boot():
+                raise ProfileError('Restart after legacy cleanup before saving a new baseline')
+            data = None
+        device = self.device(adapter)
+        if data and (data['device'] != device['identity'] or data['phase'] != 'enabled'):
+            raise ProfileError('Restore the saved profile before enabling another one')
+        self.check_rule()
+        before = self.values(device)
+        if data is None and self.rule.exists():
+            raise ProfileError('Existing rule has no baseline; manual recovery required')
+        if data is None:
+            data = {'version': VERSION, 'phase': 'enabled', 'device': device['identity'], 'original': before}
+        self.save(data)  # Persist recovery information before the first hardware write.
+        try:
+            self.write_values(device, TARGET)
+            self.atomic(self.rule, self.rule_text())
+            self.reload_rules()
+        except Exception as failure:
+            # Keep the baseline until rollback AND rule reload are verified.
+            data['phase'] = 'restore_pending'
+            self.save(data)
+            try:
+                self.restore(data)
+            except Exception:
+                raise ProfileError('Apply failed; recovery information retained, restore required') from failure
+            raise ProfileError('Apply failed; original settings restored') from failure
+
+    def restore(self, data):
+        data['phase'] = 'restore_pending'
+        self.save(data)
+        self.remove_rule()  # Persistent activation can be removed without a connected adapter.
+        failure = None
+        try:
+            self.reload_rules()
+        except (OSError, subprocess.SubprocessError) as error:
+            failure = error
+        device = self.find_device(data['device'])
+        if device is not None:
+            current = self.values(device)
+            if any(current[key] not in (TARGET[key], data['original'][key]) for key in TARGET):
+                raise ProfileError('Settings changed externally; baseline retained for manual recovery')
+            self.write_values(device, data['original'])
+        if failure:
+            raise ProfileError('Rule reload failed; recovery information retained') from failure
+        if device is not None:
+            self.state_file.unlink()
+
+    def disable(self):
+        if self.legacy():
+            raise ProfileError('Use explicit legacy cleanup; original values are unknown')
+        data = self.state()
+        if data is None:
+            self.check_rule()
+            if self.rule.exists():
+                raise ProfileError('Missing baseline; refusing to guess original settings')
+            return
+        if data['phase'] == 'legacy-cleanup':
+            return
+        self.restore(data)
+
+    def remove_legacy(self):
+        if self.state() and self.state()['phase'] != 'legacy-cleanup':
+            raise ProfileError('Restore the current profile before legacy cleanup')
+        # Accept only the exact historical files shipped by this plugin, not arbitrary root files.
+        for path in (self.legacy_config, self.legacy_rule):
+            self.trusted(path, missing=True)
+        config = self.read(self.legacy_config) if self.legacy_config.exists() else ''
+        rule = self.read(self.legacy_rule) if self.legacy_rule.exists() else ''
+        config_pattern = (r'# MX Ergo: controller defaults, not measured input timing\n'
+                          r'w /sys/kernel/debug/bluetooth/(hci[0-9]+)/conn_min_interval - - - - 6\n'
+                          r'w /sys/kernel/debug/bluetooth/\1/conn_max_interval - - - - 9\n')
+        rule_pattern = (r'# MX Ergo: USB autosuspend off for the selected controller at this USB port\n'
+                        r'ACTION=="add\|change", SUBSYSTEM=="usb", KERNEL=="[0-9]+-[0-9]+(?:\.[0-9]+)*", '
+                        r'ATTR\{idVendor\}=="[a-fA-F0-9]{4}", ATTR\{idProduct\}=="[a-fA-F0-9]{4}", ATTR\{power/control\}="on"\n')
+        if (config and not re.fullmatch(config_pattern, config)) or (rule and not re.fullmatch(rule_pattern, rule)):
+            raise ProfileError('Unrecognized legacy configuration; manual review required')
+        if not config and not rule and not self.state():
+            return
+        self.save({'version': VERSION, 'phase': 'legacy-cleanup', 'boot': self.boot()})
+        self.legacy_config.unlink(missing_ok=True)
+        self.legacy_rule.unlink(missing_ok=True)
+        self.reload_rules()
+        # Current values are deliberately left alone: no historical baseline exists.
+
+    def reapply(self, adapter):
+        data = self.state()
+        if not data or data['phase'] != 'enabled' or self.legacy():
+            return
+        self.check_rule()
+        if not self.rule.exists():
+            return
+        device = self.device(adapter)
+        if device['identity'] == data['device']:
+            self.write_values(device, TARGET)
+
+
+def main(argv):
+    if len(argv) != 2 or argv[0] not in ('--status', '--enable', '--disable', '--remove-legacy', '--reapply'):
+        raise ProfileError('Usage: helper --status|--enable|--disable|--remove-legacy|--reapply hciN|-')
+    action, adapter = argv
+    if adapter != '-' and not re.fullmatch(r'hci[0-9]+', adapter):
+        raise ProfileError('Invalid adapter')
+    profile = Profile()
+    if action == '--status':
+        print(json.dumps(profile.status(adapter)))
+        return
+    if os.geteuid() != 0:
+        raise ProfileError('Administrator authorization required')
+    def timeout(*_):
+        raise ProfileError('Operation timed out')
+    signal.signal(signal.SIGALRM, timeout)
+    signal.alarm(10)
+    with profile.locked():
+        if action == '--enable':
+            profile.enable(adapter)
+        elif action == '--disable':
+            profile.disable()
+        elif action == '--remove-legacy':
+            profile.remove_legacy()
+        else:
+            profile.reapply(adapter)
+    print(json.dumps(profile.status(adapter)))
+
+
+if __name__ == '__main__':
+    try:
+        main(sys.argv[1:])
+    except (ProfileError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+        print('MX Ergo Bluetooth: ' + str(error)[:512], file=sys.stderr)
+        sys.exit(1)

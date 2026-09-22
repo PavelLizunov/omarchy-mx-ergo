@@ -3,3 +3,8 @@
 .DS_Store
 *.swp
 *.log
+
+__pycache__/
+*.pyc
+# Local hardware investigation includes device identifiers.
+research/

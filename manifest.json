@@ -19,9 +19,8 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "deviceAddress": "C2:B5:BB:BB:64:FF",
+      "deviceAddress": "",
       "hyprDeviceName": "logitech-mx-ergo-multi-device-trackball-",
-      "showPercentage": true,
       "hideWhenDisconnected": false,
       "sensitivity": 0.0,
       "accelProfile": "adaptive",
@@ -36,12 +35,6 @@
         "defaultValue": "system"
       },
       {
-        "key": "showPercentage",
-        "type": "boolean",
-        "label": "Show battery percent in the bar",
-        "defaultValue": true
-      },
-      {
         "key": "hideWhenDisconnected",
         "type": "boolean",
         "label": "Hide indicator when trackball is disconnected",
@@ -50,8 +43,8 @@
       {
         "key": "deviceAddress",
         "type": "string",
-        "label": "Bluetooth MAC address",
-        "defaultValue": "C2:B5:BB:BB:64:FF"
+        "label": "Bluetooth address or HID serial (blank: automatic)",
+        "defaultValue": ""
       },
       {
         "key": "hyprDeviceName",

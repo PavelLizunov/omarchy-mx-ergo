@@ -33,6 +33,16 @@ PY
 
 echo "=== 5. Running Model contract tests ==="
 node "$plugin_dir/tests/model-contract.js"
+node "$plugin_dir/tests/panel-scroll.js"
+node "$plugin_dir/tests/panel-navigation.js"
+node "$plugin_dir/tests/battery.js"
+node "$plugin_dir/tests/bluetooth-model.js"
+python3 -B "$plugin_dir/tests/bluetooth-profile.py"
+node "$plugin_dir/tests/hyprland-reload.js"
+python3 -B "$plugin_dir/tests/test_apply_settings.py"
+python3 -B "$plugin_dir/tests/config-store.py"
+node "$plugin_dir/tests/config-model.js"
+node "$plugin_dir/tests/sleep-lifecycle.js"
 
 echo "=== 6. Running Localization completeness tests ==="
 node "$plugin_dir/tests/i18n-completeness.js"
@@ -40,7 +50,10 @@ node "$plugin_dir/tests/i18n-completeness.js"
 echo "=== 7. Running QML Lint ==="
 python3 -B "$plugin_dir/tests/qml-lint.py"
 
-echo "=== 8. Running Lockscreen guard tests ==="
+echo "=== 8. Running trackball interaction tests ==="
+QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input "$plugin_dir/tests/ui"
+
+echo "=== 9. Running Lockscreen guard tests ==="
 bash "$plugin_dir/tests/lockscreen-guard.sh"
 
 echo "=================================================="

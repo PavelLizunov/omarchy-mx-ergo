@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 
@@ -6,6 +7,7 @@ Panel {
   id: root
   moduleName: "io.github.pavellizunov.mx-ergo"
   ipcTarget: "io.github.pavellizunov.mx-ergo"
+  onOpenedChanged: if (opened) panelCard.showPage("buttons")
 
   readonly property bool hideWhenDisconnected: root.setting("hideWhenDisconnected", false)
   readonly property bool vertical: root.bar ? root.bar.vertical : false
@@ -56,34 +58,41 @@ Panel {
       anchors.centerIn: parent
       spacing: Style.space(3)
 
-      Text {
-        textFormat: Text.PlainText
-        text: ergoModel.deviceIcon
-        color: button.active && button.useActiveColor ? button.activeColor : button.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.bar.iconFont
+      Item {
+        id: trackballIcon
+        readonly property color foreground: button.active && button.useActiveColor ? button.activeColor : button.foreground
+        width: Style.bar.iconCanvas
+        height: width
         anchors.verticalCenter: parent.verticalCenter
-      }
 
-      // 3 vertical micro-segments (fits strictly inside single 27px slot)
-      Column {
-        visible: ergoModel.connected && ergoModel.batterySegments !== null && !ergoModel.isCharging
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: 1
+        Image {
+          id: trackballSource
+          anchors.fill: parent
+          source: Qt.resolvedUrl("assets/trackball.svg")
+          sourceSize.width: Math.ceil(width * 4)
+          sourceSize.height: Math.ceil(height * 4)
+          fillMode: Image.PreserveAspectFit
+          smooth: true
+          mipmap: true
+          visible: false
+        }
 
-        Repeater {
-          model: 3
-          Rectangle {
-            required property int index
-            readonly property int segNumber: 3 - index
-            readonly property bool active: ergoModel.batterySegments >= segNumber
-            width: 3
-            height: 3
-            radius: 1
-            color: active
-              ? (button.active && button.useActiveColor ? button.activeColor : button.foreground)
-              : Qt.rgba(button.foreground.r, button.foreground.g, button.foreground.b, 0.20)
-          }
+        MultiEffect {
+          anchors.fill: parent
+          source: trackballSource
+          colorization: 1
+          colorizationColor: trackballIcon.foreground
+        }
+
+        Rectangle {
+          anchors.centerIn: parent
+          visible: !ergoModel.connected
+          width: parent.width
+          height: Style.space(1.5)
+          radius: height / 2
+          rotation: -45
+          antialiasing: true
+          color: trackballIcon.foreground
         }
       }
 
@@ -107,7 +116,7 @@ Panel {
     open: root.opened
     bar: root.bar
     focusTarget: panelCard
-    contentWidth: popup.fittedContentWidth(Style.space(340))
+    contentWidth: popup.fittedContentWidth(Style.space(380))
     contentHeight: popup.fittedContentHeight(panelCard.contentHeight)
 
     ErgoPanel {

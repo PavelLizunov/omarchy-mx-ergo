@@ -9,26 +9,17 @@
 - **Kernel Drivers:** `uhid` / `usbhid` -> `hid-logitech-hidpp` (`HID++ 4.5 device connected.`).
 - **Power Supply Node:** `/sys/class/power_supply/hidpp_battery_*` (`POWER_SUPPLY_CAPACITY_LEVEL=Full|Normal|Low|Critical`, `POWER_SUPPLY_STATUS=Discharging|Charging`).
 
-## 2. Telemetry Architecture (Linux Driver Grounding)
+## 2. Battery telemetry
 
-1. **Linux Kernel Driver `hid-logitech-hidpp` (`/sys/class/power_supply/hidpp_battery_*`):**
-   - Directly reflects hardware HID++ 4.5 battery events.
-   - `capacity_level`: `Full` (80-100%), `Normal` (20-80%), `Low` (5-20%), `Critical` (<5%).
-   - `status`: `Discharging`, `Charging`, `Full`.
-   - `serial_number`: device hardware address.
-2. **`Quickshell.Bluetooth` & `Quickshell.Services.UPower`:**
-   - Fallback signals and reactive connection lifecycle observers.
-3. **Dual Transport Resolution:**
-   - Automatically determines whether the connection is `ble` or `unifying`.
+`Quickshell.Services.UPower` and `Quickshell.Bluetooth` own battery state. `PowerDevice.qml` reads HID identity metadata through a native `FileView`, then `ErgoModel.qml` selects exactly one matching battery. `Battery.js` interprets recognized UPower icons and BlueZ values as approximate categories. UPower’s numeric percentage is not used: it can be a compatibility approximation for a coarse battery level.
 
-### Uncertainty Rules
-- Disconnected: `batteryFraction = null`, `batteryPercent = null`. The bar displays `󰍿` (trackball off/disconnected) and tooltip shows "Сон / Отключен".
-- Connected: Displays live battery level and icon (`󰁹` to `󰁺`, or `󰂄` when charging).
-- Zero Coercion Ban: Unknown battery is never displayed as 0%.
+The installed Quickshell API has no `BatteryLevel`, serial, or hardware measurement timestamp. Metadata read time is not battery measurement time. High does not mean a verified 100%. No battery gauge is rendered. The main label shows the reported category, charging, or unknown when no category is available. A secondary hint explains that the level is approximate and an exact percentage is unavailable. The Bluetooth connection flag takes precedence over cached BLE battery presence.
+
+See [README limitations and controller diagnostics](README.md#optional-bluetooth-latency-profile) for source precision, receiver identity, and profile semantics. Do not add raw HID readers or periodic battery polling to obtain apparent freshness.
 
 ## 3. Hyprland Pointer & Button Integration (0.56.2+)
 
-Hyprland 0.56.2 uses a Lua configuration engine where legacy `hyprctl keyword` is superseded by `hyprctl eval`.
+This plugin targets the Lua interface on the tested Omarchy host (Hyprland 0.56.2). It requires `hyprctl eval`, `hl.device`, and the host's `o.bind` helper; compatibility with other Hyprland configurations is not established.
 
 ### Lua Commands
 ```lua
@@ -53,17 +44,21 @@ o.bind("mouse:278", "MX Ergo: Prev Workspace", hl.dsp.focus({ workspace = "e-1" 
 ```
 
 ### Rate Limiting & Throttling
-- When the user drags the sensitivity slider, a single one-shot `Timer` (`applyDebounce`, 250ms) ensures that `hyprctl eval` is called at most once every quarter-second.
+- When the user drags the sensitivity slider, a single one-shot `Timer` (`applyDebounce`, 250ms) coalesces changes until the slider has been idle for 250ms. The managed application queue allows only one helper at a time.
 - Button and pointer changes are saved to `~/.config/omarchy/mx-ergo.json` (outside the watched plugin tree) via a debounced writer (500ms).
 
-## 4. OpenDesign & Anti-Slop Implementation
+## 4. Interface contract
 
-- **Design System Grounding:** Modeled after high-precision dev-tools and hardware interfaces (Teenage Engineering / Linear):
-  - Strict 4px/8px rhythm (`Style.space(...)`).
-  - High-contrast visual hierarchy (Title:body contrast ≥ 2.5x).
-  - Clear state pills with subtle background fills.
-  - Full keyboard accessibility (`PanelKeyCatcher`: Tab, Arrows, Enter, Escape).
-- **Anti-Slop:**
-  - Zero decorative AI buzzwords.
-  - Concrete facts: exact battery state, MAC address, true hardware button notice.
-  - Zero hardcoded hex colors; 100% theme tokens (`Color.*`, `Style.*`).
+The panel uses the host's `PanelHero`, `KeyboardPanel`, shared `Style` sizes and colors. Its width follows the ROG Cetra reference (`Style.space(380)`). Buttons, Pointer and Device are separate pages; the button editor replaces the diagram. Confirming an assignment returns to the diagram. Draft edits have no effect until explicitly applied.
+
+The small SVG trackball icon and the larger generated illustration are separate assets. The illustration's five targets are defined in `TrackballMap.qml`. Theme changes tint the small icon and all QML controls; they do not recolor the product illustration.
+
+Keyboard handling is exercised by production-function and offscreen diagram tests. A complete native keyboard-only and accessibility session is still an acceptance item, not a claim of full accessibility.
+
+## 5. Persistence and recovery
+
+`config-store.py` caps preference reads at 64 KiB, rejects invalid values and special files, and uses an atomic same-directory replacement with mode 0600. One managed writer serializes saves and retains only the latest queued value. Read/write errors appear in the panel and logs; the previous file is preserved on write failure. Retry serializes through the same writer. Startup guards also expose a helper that fails to launch. Closing the shell during the 500ms save debounce can still discard a just-made edit.
+
+`apply-settings.py` reads at most 1 MiB of child output and kills/reaps a child on overflow, timeout or cancellation. Each invocation has a five-second deadline. The model adds a 40-second overall watchdog and at most one pending request. Successful readback verifies binding keys, global scope and descriptions, not the eventual effect of an external command.
+
+Bluetooth resume recovery makes at most two attempts, at approximately 2 and 12 seconds after resume. Reconnect uses only a known native BlueZ device. An eight-second busy guard prevents overlapping attempts. The logind listener has at most three restart attempts spaced by two seconds. Its failure is visible; successful startup clears the warning without resetting the retry budget. Sleep stops reconnect timers and cancels the current settings helper. Resume restarts configured settings application.

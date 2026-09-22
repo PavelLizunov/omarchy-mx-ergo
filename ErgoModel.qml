@@ -1,13 +1,15 @@
 import QtQuick
+import QtQml.Models
 import Quickshell
 import Quickshell.Io
 import Quickshell.Bluetooth
+import Quickshell.Hyprland
 import Quickshell.Services.UPower
 import "I18n.js" as I18n
+import "Battery.js" as Battery
 
 // Single state owner for Logitech MX Ergo trackball.
-// Directly integrated with Linux kernel hid-logitech-hidpp driver (/sys/class/power_supply),
-// BlueZ Bluetooth GATT, UPower, and Hyprland pointer/button controls.
+// Reactive BlueZ/UPower telemetry and Hyprland pointer/button controls.
 QtObject {
   id: root
 
@@ -24,22 +26,55 @@ QtObject {
     root.localeRequested(code)
   }
 
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
+  readonly property string configPath: configHome + "/omarchy/mx-ergo.json"
+  readonly property string configHelper: decodeURIComponent(Qt.resolvedUrl("scripts/config-store.py").toString().replace(/^file:\/\//, ""))
+
   // User adjustable pointer settings
   property real sensitivity: 0.0
   property string accelProfile: "adaptive"
   property bool naturalScroll: false
+  property bool configReadComplete: false
+  property bool settingsConfigured: false
+  property bool configLoadFailed: false
+  property bool configSaveFailed: false
+  property bool configWriting: false
+  property bool sleeping: false
+  property bool shuttingDown: false
+  property bool sleepMonitorFailed: false
+  property int sleepMonitorRestarts: 0
 
-  // Panel active state for dual-cadence polling
+  // Theme changes reload Hyprland and discard settings applied via hyprctl eval.
+  property Connections hyprlandEvents: Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (event && event.name === "configreloaded" && root.configReadComplete && root.settingsConfigured) {
+        console.info("MX Ergo: restoring settings after Hyprland reload")
+        root.applyAllSettings()
+      }
+    }
+  }
+
+  // Refresh optional controller diagnostics when the panel opens
   property bool panelOpen: false
   onPanelOpenChanged: {
     if (root.panelOpen) {
-      root.refreshDriver()
       root.checkLowLatency()
     }
   }
 
-  // Low-latency mode status (125 Hz / 7.5ms - 11.25ms BLE intervals)
-  property bool lowLatencyEnabled: false
+  property string lowLatencyState: "unknown"
+  property bool lowLatencyHelperAvailable: false
+  property bool lowLatencyCanRestore: false
+  property bool lowLatencyLegacy: false
+  property bool lowLatencyConfigured: false
+  property bool lowLatencyFailed: false
+  readonly property bool lowLatencyEnabled: lowLatencyState === "applied"
+  readonly property bool lowLatencyBusy: lowLatencyApply.running
+  readonly property string bluetoothAdapter: btDevice && btDevice.adapter
+    ? String(btDevice.adapter.adapterId).split("/").pop() : ""
+  readonly property string lowLatencyScript: decodeURIComponent(Qt.resolvedUrl("scripts/low-latency.sh").toString().replace(/^file:\/\//, ""))
+  onBluetoothAdapterChanged: root.checkLowLatency()
 
   // Auto-reconnect on system wake / recovery
   property bool autoReconnect: true
@@ -66,14 +101,6 @@ QtObject {
   property string buttonCustomCmdTiltLeft: ""
   property string buttonCustomCmdTiltRight: ""
 
-  // Linux kernel hid-logitech-hidpp sysfs telemetry
-  property bool driverFound: false
-  property string driverCapacityLevel: ""
-  property string driverStatus: ""
-  property bool driverOnline: false
-  property string driverSerial: ""
-  property string driverModel: ""
-
   // Reactive devices from native C++ services
   readonly property var btDevicesList: Bluetooth.devices ? Bluetooth.devices.values : []
   readonly property var upDevicesList: UPower.devices ? UPower.devices.values : []
@@ -82,67 +109,85 @@ QtObject {
   readonly property var btDevice: {
     var list = btDevicesList
     var target = root.targetAddress.toUpperCase().replace(/:/g, "")
+    var matches = []
     for (var i = 0; i < list.length; i++) {
       var d = list[i]
       if (!d) continue
       var addr = String(d.address || "").toUpperCase().replace(/:/g, "")
       var name = String(d.name || d.deviceName || "")
       if ((target !== "" && addr === target) || (target === "" && name.indexOf("MX Ergo") !== -1)) {
-        return d
+        matches.push(d)
       }
     }
-    return null
+    return matches.length === 1 ? matches[0] : null
   }
 
-  // Matched UPower device (hidpp_battery)
-  readonly property var upDevice: {
-    var list = upDevicesList
-    for (var i = 0; i < list.length; i++) {
-      var d = list[i]
-      if (!d) continue
-      var path = String(d.nativePath || "")
-      var model = String(d.model || "")
-      if (path.indexOf("hidpp_battery") !== -1 && model.indexOf("MX Ergo") !== -1) {
-        return d
-      }
+  property var powerCandidates: []
+  property Instantiator powerDevices: Instantiator {
+    model: root.upDevicesList
+    delegate: PowerDevice {
+      required property var modelData
+      device: modelData
     }
-    return null
+    onObjectAdded: function(index, object) {
+      root.powerCandidates = root.powerCandidates.concat([object])
+    }
+    onObjectRemoved: function(index, object) {
+      root.powerCandidates = root.powerCandidates.filter(function(item) { return item !== object })
+    }
   }
 
-  // Transport detection: Bluetooth BLE vs Logitech Unifying Dongle
+  // Reject ambiguous/foreign devices instead of selecting the first Logitech battery.
+  readonly property var matchedPower: {
+    var target = root.btDevice ? root.btDevice.address : root.targetAddress
+    var available = root.powerCandidates.filter(function(item) {
+      return item.device && item.device.ready && item.device.isPresent && item.identity
+        && (item.identity.transport !== "ble" || (root.btDevice && root.btDevice.connected))
+    })
+    var matches = available.filter(function(item) { return Battery.matches(item.identity, target) })
+    if (matches.length === 1) return matches[0]
+    if (matches.length > 1 || (root.btDevice && root.btDevice.connected)) return null
+    // Bluetooth MAC and receiver serial differ. With no active BLE link, a
+    // single receiver-side MX Ergo can be selected by its verified product ID.
+    var receivers = available.filter(function(item) { return item.identity.transport === "unifying" })
+    return receivers.length === 1 ? receivers[0] : null
+  }
+  readonly property var upDevice: matchedPower ? matchedPower.device : null
+
   readonly property string transport: {
     if (btDevice && btDevice.connected) return "ble"
-    if (driverFound && driverOnline) return "unifying"
-    if (upDevice && upDevice.isPresent) return "unifying"
+    // A cached BLE battery is not evidence of a receiver connection.
+    if (matchedPower && matchedPower.identity.transport === "unifying") return "unifying"
     return ""
   }
 
   readonly property bool connected: transport !== ""
-  readonly property bool deviceFound: btDevice !== null || driverFound || (upDevice && upDevice.isPresent)
-  readonly property bool isCharging: driverStatus.toLowerCase() === "charging" || (upDevice && upDevice.state === 1)
+  readonly property bool deviceFound: btDevice !== null || matchedPower !== null
+  readonly property var isCharging: !connected || !upDevice || upDevice.state === UPowerDeviceState.Unknown
+    ? null : upDevice.state === UPowerDeviceState.Charging
 
   onConnectedChanged: {
     if (root.connected) {
       root.isConnecting = false
       connectingResetTimer.stop()
+      wakeReconnectTimer.stop()
+      wakeStage2Timer.stop()
     }
   }
 
-  function reconnectDevice() {
-    if (root.connected || root.isConnecting) return
+  readonly property bool canReconnect: !!root.btDevice && /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(root.btDevice.address)
 
-    var target = root.macAddress
-    if (!target || target === "046D:B01D") target = "C2:B5:BB:BB:64:FF"
+  function reconnectDevice() {
+    if (root.connected || root.isConnecting || root.sleeping || !root.btDevice) return
+
+    var target = root.btDevice.address
     // Strict operand validation: must match valid 6-octet MAC address pattern
     if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(target)) return
 
     root.isConnecting = true
     connectingResetTimer.restart()
 
-    if (root.btDevice) {
-      root.btDevice.connect()
-    }
-    Quickshell.execDetached(["omarchy-bluetooth-device", "connect", target])
+    root.btDevice.connect()
   }
 
   function setAutoReconnect(enabled) {
@@ -153,36 +198,66 @@ QtObject {
     }
   }
 
-  // Low latency checker & applier (delegates privilege elevation to Polkit via pkexec)
-  function checkLowLatency() {
-    if (!lowLatencyCheck.running) {
-      lowLatencyCheck.running = true
-    }
+  // The process lifetime includes the Polkit prompt; do not guess with a 3s timer.
+  function checkLowLatency(preserveError) {
+    if (root.lowLatencyBusy || root.sleeping || root.shuttingDown) return
+    if (lowLatencyCheck.running) return
+    if (preserveError !== true) root.lowLatencyFailed = false
+    root.lowLatencyState = "unknown"
+    root.lowLatencyConfigured = false
+    root.lowLatencyHelperAvailable = false
+    root.lowLatencyCanRestore = false
+    root.lowLatencyLegacy = false
+    lowLatencyCheck.adapterAtStart = root.bluetoothAdapter
+    lowLatencyCheck.command = [root.lowLatencyScript, "--status", root.bluetoothAdapter || "-"]
+    lowLatencyCheck.running = true
   }
 
   function applyLowLatency() {
-    var scriptPath = Quickshell.env("HOME") + "/.config/omarchy/plugins/slovn.mx-ergo/scripts/low-latency.sh"
-    Quickshell.execDetached(["pkexec", scriptPath, "--enable"])
-    lowLatencyRecheckTimer.restart()
+    runLowLatency("--enable")
   }
 
   function revertLowLatency() {
-    var scriptPath = Quickshell.env("HOME") + "/.config/omarchy/plugins/slovn.mx-ergo/scripts/low-latency.sh"
-    Quickshell.execDetached(["pkexec", scriptPath, "--disable"])
-    lowLatencyRecheckTimer.restart()
+    runLowLatency("--disable")
   }
 
-  property Timer lowLatencyRecheckTimer: Timer {
-    interval: 3000
-    repeat: false
-    onTriggered: root.checkLowLatency()
+  function runLowLatency(action) {
+    if (root.lowLatencyBusy || !root.lowLatencyHelperAvailable) return
+    if (["--enable", "--disable", "--remove-legacy"].indexOf(action) < 0) return
+    if (action === "--enable" && !/^hci[0-9]+$/.test(root.bluetoothAdapter)) return
+    lowLatencyCheck.running = false
+    root.lowLatencyFailed = false
+    lowLatencyApply.command = [root.lowLatencyScript, action, root.bluetoothAdapter || "-"]
+    lowLatencyApply.running = true
+  }
+
+  property Process lowLatencyApply: Process {
+    onExited: function(exitCode) {
+      root.lowLatencyFailed = exitCode !== 0
+      Qt.callLater(function() { root.checkLowLatency(true) })
+    }
   }
 
   property Process lowLatencyCheck: Process {
     id: lowLatencyCheck
-    command: ["test", "-f", "/etc/tmpfiles.d/bluetooth-low-latency.conf"]
-    onExited: function(exitCode) {
-      root.lowLatencyEnabled = (exitCode === 0)
+    property string adapterAtStart: ""
+    onExited: {
+      if (adapterAtStart !== root.bluetoothAdapter) Qt.callLater(root.checkLowLatency)
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (lowLatencyCheck.adapterAtStart !== root.bluetoothAdapter || root.lowLatencyBusy) return
+        try {
+          var result = JSON.parse(text)
+          root.lowLatencyHelperAvailable = result.version === 1 && result.helperAvailable === true
+          root.lowLatencyCanRestore = result.canRestore === true
+          root.lowLatencyLegacy = result.state === "legacy"
+          root.lowLatencyConfigured = result.configured === true
+          root.lowLatencyState = ["applied", "partial", "off", "unknown", "unavailable", "legacy", "restart", "restore_pending"].indexOf(result.state) >= 0 ? result.state : "unknown"
+        } catch (e) {
+          root.lowLatencyState = "unknown"
+        }
+      }
     }
   }
 
@@ -194,91 +269,24 @@ QtObject {
 
   // MAC / hardware address
   readonly property string macAddress: {
-    if (driverSerial !== "") return driverSerial.toUpperCase()
+    if (root.matchedPower) return root.matchedPower.identity.address
     if (btDevice && btDevice.address) return String(btDevice.address).toUpperCase()
     if (root.targetAddress !== "") return root.targetAddress.toUpperCase()
     return "046D:B01D"
   }
 
-  // Battery Tier derived directly from hid-logitech-hidpp driver
-  readonly property string batteryTier: {
-    if (!root.connected) return ""
-
-    var cap = root.driverCapacityLevel.toLowerCase()
-    if (cap === "full") return "full"
-    if (cap === "normal" || cap === "high") return "normal"
-    if (cap === "low") return "low"
-    if (cap === "critical") return "critical"
-
-    // Fallback: UPower iconName when sysfs is delayed
-    if (upDevice && upDevice.isPresent && upDevice.iconName) {
-      var icon = upDevice.iconName.toLowerCase()
-      if (icon.indexOf("full") !== -1) return "full"
-      if (icon.indexOf("good") !== -1) return "normal"
-      if (icon.indexOf("low") !== -1) return "low"
-      if (icon.indexOf("caution") !== -1 || icon.indexOf("empty") !== -1) return "critical"
-    }
-
-    // Fallback: UPower / BlueZ numeric percentage
-    var raw = -1
-    if (upDevice && upDevice.isPresent && typeof upDevice.percentage === "number" && upDevice.percentage >= 0) {
-      raw = upDevice.percentage * 100
-    } else if (btDevice && btDevice.batteryAvailable && typeof btDevice.battery === "number" && btDevice.battery >= 0) {
-      raw = btDevice.battery * 100
-    }
-
-    if (raw < 0) return ""
-    if (raw >= 80) return "full"
-    if (raw >= 30) return "normal"
-    if (raw >= 10) return "low"
-    return "critical"
-  }
-
-  // Discrete 3-segment battery meter (hardware reality: Full 3/3, Normal 2/3, Low 1/3, Critical 0/3)
-  readonly property var batterySegments: {
-    if (!root.connected || root.batteryTier === "") return null
-    if (root.batteryTier === "full") return 3
-    if (root.batteryTier === "normal") return 2
-    if (root.batteryTier === "low") return 1
-    return 0
-  }
-
-  // Visual battery fraction for progress meter (0.0 to 1.0)
-  readonly property var batteryFraction: {
-    if (!root.connected || root.batterySegments === null) return null
-    return root.batterySegments / 3.0
-  }
-
-  // Concise segment text (e.g. "3/3", "2/3", "1/3", or "Заряжается")
-  readonly property string batteryLevelText: {
-    if (!root.connected) return I18n.t("disconnected", root.effectiveLanguage)
-    if (root.isCharging) return I18n.t("battery_charging", root.effectiveLanguage) + " (3/3)"
-    if (root.batterySegments === 0) return "! 0/3"
-    return root.batterySegments + "/3"
-  }
-
-  // Short dots badge for bar (e.g. "●●●", "●●○", "●○○", "○○○")
-  readonly property string barBatteryText: {
-    if (!root.connected || root.batterySegments === null) return ""
-    if (root.isCharging) return "󰂄"
-    if (root.batterySegments === 3) return "●●●"
-    if (root.batterySegments === 2) return "●●○"
-    if (root.batterySegments === 1) return "●○○"
-    return "○○○"
-  }
-
-  // Battery icon based on state
-  readonly property string batteryIcon: {
-    if (!root.connected || root.batteryTier === "") return "󰂑"
-    if (root.isCharging) return "󰂄"
-    if (root.batteryTier === "full") return "󰁹"
-    if (root.batteryTier === "normal") return "󰁾"
-    if (root.batteryTier === "low") return "󰁻"
-    return "󰂃"
-  }
-
-  // Device icon (trackball)
-  readonly property string deviceIcon: root.connected ? "󰍽" : "󰍿"
+  // Every level is approximate: this MX Ergo interface does not expose verified SOC.
+  readonly property string batteryTier: Battery.tier(root.connected, root.isCharging,
+    root.upDevice ? root.upDevice.iconName : "",
+    !!(root.btDevice && root.btDevice.connected && root.btDevice.batteryAvailable),
+    root.btDevice ? root.btDevice.battery : null)
+  // Show the reported category; the hint explains that exact charge is unavailable.
+  readonly property string batteryLevelText: Battery.label(root.connected, root.isCharging, root.batteryTier,
+    function(key) { return root.t(key) })
+  readonly property string batteryReportText: root.batteryTier || root.isCharging
+    ? root.t("battery_reported")
+    : root.t("battery_estimate_hint")
+  readonly property string batteryIcon: root.isCharging ? "󰂄" : "󰂑"
 
   readonly property string transportText: {
     if (root.transport === "ble") return I18n.t("transport_ble", root.effectiveLanguage)
@@ -368,6 +376,7 @@ QtObject {
 
   function setButtonAction(btnKey, action) {
     var act = String(action || "default")
+    if (root.availableActions.indexOf(act) < 0 && act !== "custom_shortcut" && act !== "custom_command") return
     if (btnKey === "back") root.buttonBack = act
     else if (btnKey === "forward") root.buttonForward = act
     else if (btnKey === "middle") root.buttonMiddle = act
@@ -379,6 +388,7 @@ QtObject {
 
   function setCustomShortcut(btnKey, shortcutStr) {
     var s = String(shortcutStr || "").trim()
+    if (s.length > 256 || s.indexOf("\u0000") >= 0) return
     if (btnKey === "back") root.buttonCustomShortcutBack = s
     else if (btnKey === "forward") root.buttonCustomShortcutForward = s
     else if (btnKey === "middle") root.buttonCustomShortcutMiddle = s
@@ -389,6 +399,7 @@ QtObject {
 
   function setCustomCommand(btnKey, cmdStr) {
     var c = String(cmdStr || "").trim()
+    if (c.length > 2048 || c.indexOf("\u0000") >= 0) return
     if (btnKey === "back") root.buttonCustomCmdBack = c
     else if (btnKey === "forward") root.buttonCustomCmdForward = c
     else if (btnKey === "middle") root.buttonCustomCmdMiddle = c
@@ -435,12 +446,16 @@ QtObject {
     return I18n.t("action_" + action, root.effectiveLanguage)
   }
 
+  function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\"'\"'") + "'"
+  }
+
   // Convert human-readable key combination ("CTRL + SHIFT + T", "SUPER + 8", "Super P+8") to wtype shell command
   function shortcutToWtype(shortcutStr) {
     if (!shortcutStr) return ""
     var raw = String(shortcutStr).replace(/,/g, " ").replace(/\+/g, " ")
     var tokens = raw.trim().split(/\s+/)
-    if (tokens.length === 0) return ""
+    if (tokens.length === 0 || !raw.trim()) return ""
     var mods = []
     var releaseMods = []
     var keys = []
@@ -462,13 +477,14 @@ QtObject {
         keys.push(tokens[i])
       }
     }
+    if (keys.length === 0) return ""
     var cmd = "wtype -s 25 -d 20"
     for (var m = 0; m < mods.length; m++) cmd += " " + mods[m]
     for (var k = 0; k < keys.length; k++) {
       var key = keys[k]
       var uKey = key.toUpperCase()
       if (key.length === 1) {
-        cmd += " -k " + key.toLowerCase()
+        cmd += " -k " + shellQuote(key.toLowerCase())
       } else if (uKey === "SPACE") {
         cmd += " -k space"
       } else if (uKey === "ENTER" || uKey === "RETURN") {
@@ -506,7 +522,7 @@ QtObject {
       } else if (uKey === "MENU") {
         cmd += " -k Menu"
       } else {
-        cmd += " -k " + key
+        cmd += " -k " + shellQuote(key)
       }
     }
     for (var r = 0; r < releaseMods.length; r++) cmd += " " + releaseMods[r]
@@ -527,25 +543,10 @@ QtObject {
     onTriggered: root.saveConfig()
   }
 
-  // Hyprland Lua dispatch helpers
-  function applySensitivity() {
-    if (root.hyprDeviceName === "") return
-    var val = root.sensitivity.toFixed(2)
-    var lua = 'hl.device({ name = "' + root.hyprDeviceName + '", sensitivity = ' + val + ' })'
-    Quickshell.execDetached(["hyprctl", "eval", "do\n" + lua + "\nend"])
-  }
-
-  function applyAccelProfile() {
-    if (root.hyprDeviceName === "") return
-    var lua = 'hl.device({ name = "' + root.hyprDeviceName + '", accel_profile = "' + root.accelProfile + '" })'
-    Quickshell.execDetached(["hyprctl", "eval", "do\n" + lua + "\nend"])
-  }
-
-  function applyNaturalScroll() {
-    if (root.hyprDeviceName === "") return
-    var lua = 'hl.device({ name = "' + root.hyprDeviceName + '", natural_scroll = ' + (root.naturalScroll ? "true" : "false") + ' })'
-    Quickshell.execDetached(["hyprctl", "eval", "do\n" + lua + "\nend"])
-  }
+  // All callers share one verified application path.
+  function applySensitivity() { applyAllSettings() }
+  function applyAccelProfile() { applyAllSettings() }
+  function applyNaturalScroll() { applyAllSettings() }
 
   function buildBindSnippet(code, action, btnKey) {
     var lua = "pcall(function() hl.unbind(\"" + code + "\") end)\n"
@@ -619,13 +620,13 @@ QtObject {
         } else if (norm === "SUPER INSERT" || norm === "WIN INSERT") {
           lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: Voice Agent\", \"omarchy-voice-agent toggle || omarchy-voice-agent start\")\n"
         } else if (norm === "SUPER ALT A" || norm === "WIN ALT A") {
-          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Clipboard\", \"/home/slovn/.config/omarchy/plugins/io.github.hikari112.tts/bin/speak --clipboard\")\n"
+          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Clipboard\", " + JSON.stringify(shellQuote(root.configHome + "/omarchy/plugins/io.github.hikari112.tts/bin/speak") + " --clipboard") + ")\n"
         } else if (norm === "SUPER ALT E" || norm === "WIN ALT E") {
-          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Selection\", \"/home/slovn/.config/omarchy/plugins/io.github.hikari112.tts/bin/speak --toggle\")\n"
+          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Selection\", " + JSON.stringify(shellQuote(root.configHome + "/omarchy/plugins/io.github.hikari112.tts/bin/speak") + " --toggle") + ")\n"
         } else if (norm === "SUPER ALT X" || norm === "WIN ALT X") {
-          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Stop\", \"/home/slovn/.config/omarchy/plugins/io.github.hikari112.tts/bin/speak --stop\")\n"
+          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Stop\", " + JSON.stringify(shellQuote(root.configHome + "/omarchy/plugins/io.github.hikari112.tts/bin/speak") + " --stop") + ")\n"
         } else if (norm === "SUPER ALT R" || norm === "WIN ALT R") {
-          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Snip\", \"/home/slovn/.config/omarchy/plugins/io.github.hikari112.tts/bin/speak --snip\")\n"
+          lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Snip\", " + JSON.stringify(shellQuote(root.configHome + "/omarchy/plugins/io.github.hikari112.tts/bin/speak") + " --snip") + ")\n"
         } else {
           var wcmd = shortcutToWtype(sc)
           if (wcmd !== "") {
@@ -642,39 +643,131 @@ QtObject {
     return lua
   }
 
-  function applyButtonBind(btnKey, action) {
-    var lua = ""
-    if (btnKey === "tiltLeft") {
-      lua += buildBindSnippet("mouse_left", action, btnKey)
-      lua += buildBindSnippet("mouse:278", action, btnKey)
-    } else if (btnKey === "tiltRight") {
-      lua += buildBindSnippet("mouse_right", action, btnKey)
-      lua += buildBindSnippet("mouse:279", action, btnKey)
-    } else {
-      var codes = {
-        "back": "mouse:275",
-        "forward": "mouse:276",
-        "middle": "mouse:274"
-      }
-      var code = codes[btnKey]
-      if (code) {
-        lua += buildBindSnippet(code, action, btnKey)
-      }
+  function applyButtonBind(btnKey, action) { applyAllSettings() }
+
+  function buildSettingsRequest() {
+    var lua = "do\n"
+    if (root.hyprDeviceName !== "") {
+      var sensitivity = Number(root.sensitivity)
+      if (!isFinite(sensitivity)) throw new Error("Invalid sensitivity")
+      var profile = root.accelProfile
+      if (profile !== "adaptive" && profile !== "flat") throw new Error("Invalid acceleration profile")
+      lua += "hl.device({ name = " + JSON.stringify(root.hyprDeviceName)
+        + ", sensitivity = " + Math.max(-1, Math.min(1, sensitivity)).toFixed(2)
+        + ", accel_profile = " + JSON.stringify(profile)
+        + ", natural_scroll = " + (root.naturalScroll ? "true" : "false") + " })\n"
     }
-    if (lua !== "") {
-      Quickshell.execDetached(["hyprctl", "eval", "do\n" + lua + "end"])
+    var buttons = { "mouse:275": "back", "mouse:276": "forward", "mouse:274": "middle",
+      "mouse_left": "tiltLeft", "mouse:278": "tiltLeft", "mouse_right": "tiltRight", "mouse:279": "tiltRight" }
+    var expected = {}
+    for (var code in buttons) {
+      var key = buttons[code]
+      var snippet = buildBindSnippet(code, getButtonAction(key), key)
+      // Read the description from the same generated bind, including JSON escapes.
+      var match = snippet.match(/o\.bind\([^,]+,\s*("(?:\\.|[^"\\])*")/)
+      expected[code] = match ? JSON.parse(match[1]) : null
+      lua += snippet
+    }
+    return { lua: lua + "end\n", expected: expected }
+  }
+
+  property var pendingSettingsRequest: null
+  property bool settingsApplying: false
+  property bool settingsRecoveryFailed: false
+  property bool settingsStopping: false
+  property int settingsGeneration: 0
+  property int settingsCapturedGeneration: -1
+  property int settingsExitCode: -1
+  property string settingsOutput: ""
+  readonly property string settingsHelper: decodeURIComponent(Qt.resolvedUrl("scripts/apply-settings.py").toString().replace(/^file:\/\//, ""))
+
+  function applyAllSettings() {
+    if (!root.configReadComplete || root.shuttingDown) return
+    settingsGeneration++
+    try {
+      pendingSettingsRequest = buildSettingsRequest()
+      root.settingsConfigured = true
+      settingsRecoveryFailed = false
+      Qt.callLater(drainSettingsRequest)
+    } catch (_) {
+      pendingSettingsRequest = null
+      settingsRecoveryFailed = true
+      console.warn("MX Ergo: invalid settings; application skipped")
     }
   }
 
-  function applyAllSettings() {
-    applySensitivity()
-    applyAccelProfile()
-    applyNaturalScroll()
-    applyButtonBind("back", root.buttonBack)
-    applyButtonBind("forward", root.buttonForward)
-    applyButtonBind("middle", root.buttonMiddle)
-    applyButtonBind("tiltLeft", root.buttonTiltLeft)
-    applyButtonBind("tiltRight", root.buttonTiltRight)
+  function drainSettingsRequest() {
+    if (root.sleeping || root.shuttingDown || settingsApplying || settingsApplier.running || pendingSettingsRequest === null) return
+    settingsApplying = true
+    settingsCapturedGeneration = settingsGeneration
+    settingsStopping = false
+    settingsExitCode = -1
+    settingsOutput = ""
+    settingsApplier.command = ["/usr/bin/python3", "-I", root.settingsHelper, JSON.stringify(pendingSettingsRequest)]
+    pendingSettingsRequest = null
+    settingsDeadline.interval = 40000
+    settingsDeadline.restart()
+    settingsApplier.running = true
+    settingsStartCheck.restart()
+  }
+
+  function finishSettingsApply() {
+    if (!settingsApplying || settingsApplier.running) return
+    settingsStartCheck.stop()
+    settingsDeadline.stop()
+    settingsApplying = false
+    var ok = false
+    try { ok = settingsExitCode === 0 && JSON.parse(settingsOutput).ok === true } catch (_) {}
+    if (settingsCapturedGeneration === settingsGeneration) settingsRecoveryFailed = !ok
+    if (ok) console.info("MX Ergo: settings applied and button bindings verified")
+    else console.warn("MX Ergo: settings verification failed after bounded recovery")
+    Qt.callLater(drainSettingsRequest)
+  }
+
+  property Process settingsApplier: Process {
+    id: settingsApplier
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.settingsOutput = text.length <= 1024 ? text : ""
+    }
+    onExited: function(exitCode) {
+      root.settingsExitCode = exitCode
+      Qt.callLater(root.finishSettingsApply)
+    }
+    onRunningChanged: {
+      if (!running && root.settingsApplying) Qt.callLater(root.finishSettingsApply)
+    }
+  }
+  property Timer settingsStartCheck: Timer {
+    id: settingsStartCheck
+    interval: 1000
+    onTriggered: root.finishSettingsApply()
+  }
+  property Timer settingsDeadline: Timer {
+    id: settingsDeadline
+    interval: 40000
+    onTriggered: {
+      if (settingsApplier.running && settingsApplier.processId > 0) {
+        settingsApplier.signal(root.settingsStopping ? 9 : 15)
+        root.settingsStopping = true
+        interval = 2000
+        restart()
+      } else root.finishSettingsApply()
+    }
+  }
+  Component.onDestruction: {
+    root.shuttingDown = true
+    sleepRetry.stop()
+    sleepStartCheck.stop()
+    wakeReconnectTimer.stop()
+    wakeStage2Timer.stop()
+    saveDebounce.stop()
+    applyDebounce.stop()
+    sleepMonitor.running = false
+    pendingSettingsRequest = null
+    settingsStartCheck.stop()
+    settingsDeadline.stop()
+    if (settingsApplier.running) settingsApplier.running = false
   }
 
   // Config persistence (saves to ~/.config/omarchy/mx-ergo.json via safe discrete argv without shell execution)
@@ -707,26 +800,73 @@ QtObject {
       }
     }
     var jsonStr = JSON.stringify(cfg, null, 2)
-    var targetPath = Quickshell.env("HOME") + "/.config/omarchy/mx-ergo.json"
-    Quickshell.execDetached([
-      "python3", "-c",
-      "import sys, pathlib; p = pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(sys.argv[2], encoding='utf-8')",
-      targetPath,
-      jsonStr
-    ])
+    root.pendingConfig = jsonStr
+    drainConfigWrite()
+  }
+
+  property string pendingConfig: ""
+  function drainConfigWrite() {
+    if (root.shuttingDown || root.configWriting || configWriter.running || !root.pendingConfig) return
+    configWriter.command = ["/usr/bin/python3", "-I", root.configHelper, "write", root.configPath, root.pendingConfig]
+    root.pendingConfig = ""
+    root.configWriting = true
+    configWriter.running = true
+    configWriteStartCheck.restart()
+  }
+  property Process configWriter: Process {
+    id: configWriter
+    onExited: function(exitCode) {
+      root.finishConfigWrite(exitCode)
+    }
+  }
+
+  function finishConfigWrite(exitCode) {
+    configWriteStartCheck.stop()
+    root.configWriting = false
+    root.configSaveFailed = exitCode !== 0
+    if (exitCode === 0) root.configLoadFailed = false
+    else console.warn("MX Ergo: preferences could not be saved")
+    Qt.callLater(root.drainConfigWrite)
+  }
+  function retrySettings() {
+    if (root.configSaveFailed) root.saveConfig()
+    if (root.settingsRecoveryFailed) root.applyAllSettings()
+  }
+  property Timer configWriteStartCheck: Timer {
+    id: configWriteStartCheck
+    interval: 1000
+    onTriggered: if (root.configWriting && !configWriter.running) root.finishConfigWrite(-1)
+  }
+  property Timer configReadStartCheck: Timer {
+    id: configReadStartCheck
+    interval: 1000
+    onTriggered: {
+      if (!configLoader.running && !root.configReadComplete) {
+        root.configReadComplete = true
+        root.configLoadFailed = true
+      }
+    }
   }
 
   // Config loader process (discrete argv, no shell interpreter)
   property Process configLoader: Process {
     id: configLoader
-    command: ["cat", Quickshell.env("HOME") + "/.config/omarchy/mx-ergo.json"]
+    command: ["/usr/bin/python3", "-I", root.configHelper, "read", root.configPath]
+    onExited: function(exitCode) {
+      configReadStartCheck.stop()
+      root.configReadComplete = true
+      if (exitCode !== 0) root.configLoadFailed = true
+      if (exitCode !== 0) console.warn("MX Ergo: invalid or unreadable preferences; using defaults without applying them")
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        root.configReadComplete = true
         var txt = (text || "").trim()
         if (!txt) return
         try {
           var cfg = JSON.parse(txt)
+          if (!cfg) return // First install: do not overwrite existing compositor bindings.
           if (typeof cfg.sensitivity === "number") root.sensitivity = cfg.sensitivity
           if (typeof cfg.accelProfile === "string") root.accelProfile = cfg.accelProfile
           if (typeof cfg.naturalScroll === "boolean") root.naturalScroll = cfg.naturalScroll
@@ -754,7 +894,7 @@ QtObject {
           }
           root.applyAllSettings()
         } catch (e) {
-          // ignore invalid json
+          root.configLoadFailed = true
         }
       }
     }
@@ -764,26 +904,64 @@ QtObject {
   property Process sleepMonitor: Process {
     id: sleepMonitor
     command: [
-      "dbus-monitor", "--system",
-      "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
+      "/usr/bin/dbus-monitor", "--system",
+      "type='signal',sender='org.freedesktop.login1',path='/org/freedesktop/login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
     ]
+    onExited: root.scheduleSleepMonitorRetry()
     stdout: SplitParser {
       onRead: function(line) {
-        // boolean false indicates system resumed from suspend
-        if (String(line).indexOf("boolean false") !== -1) {
-          wakeReconnectTimer.restart()
-        }
+        // The selected logind signal has one bounded boolean argument.
+        var value = String(line).trim()
+        if (value === "boolean true") root.prepareForSleep(true)
+        else if (value === "boolean false") root.prepareForSleep(false)
       }
     }
   }
 
-  // Double-staged reconnection timer after system wake
+  function prepareForSleep(asleep) {
+    root.sleeping = asleep
+    if (asleep) {
+      wakeReconnectTimer.stop()
+      wakeStage2Timer.stop()
+      if (settingsApplier.running) settingsApplier.signal(15)
+    } else {
+      root.sleepMonitorRestarts = 0
+      root.sleepMonitorFailed = false
+      if (root.settingsConfigured) root.applyAllSettings()
+      if (root.autoReconnect) wakeReconnectTimer.restart()
+    }
+  }
+  function scheduleSleepMonitorRetry() {
+    if (root.shuttingDown) return
+    root.sleepMonitorFailed = true
+    if (root.sleepMonitorRestarts < 3) sleepRetry.restart()
+  }
+  property Timer sleepRetry: Timer {
+    id: sleepRetry
+    interval: 2000
+    onTriggered: {
+      if (root.shuttingDown || sleepMonitor.running) return
+      root.sleepMonitorRestarts++
+      sleepMonitor.running = true
+      sleepStartCheck.restart()
+    }
+  }
+  property Timer sleepStartCheck: Timer {
+    id: sleepStartCheck
+    interval: 1000
+    onTriggered: {
+      if (!sleepMonitor.running) root.scheduleSleepMonitorRetry()
+      else root.sleepMonitorFailed = false
+    }
+  }
+
+  // Bounded reconnection attempts after the controller has had time to resume.
   property Timer wakeReconnectTimer: Timer {
     id: wakeReconnectTimer
-    interval: 600
+    interval: 2000
     repeat: false
     onTriggered: {
-      if (root.autoReconnect && !root.connected) {
+      if (root.autoReconnect && !root.connected && !root.sleeping) {
         root.reconnectDevice()
         // Second stage attempt after Bluetooth controller powers up
         wakeStage2Timer.restart()
@@ -793,75 +971,21 @@ QtObject {
 
   property Timer wakeStage2Timer: Timer {
     id: wakeStage2Timer
-    interval: 1800
+    interval: 10000
     repeat: false
     onTriggered: {
-      if (root.autoReconnect && !root.connected) {
+      if (root.autoReconnect && !root.connected && !root.sleeping) {
         root.reconnectDevice()
       }
     }
   }
 
-  // Linux kernel hid-logitech-hidpp telemetry reader process (pure shell built-ins, zero external binary forks)
-  property Process driverReader: Process {
-    id: driverReader
-    command: [
-      "sh", "-c",
-      "for d in /sys/class/power_supply/hidpp_battery_*; do " +
-      "[ -d \"$d\" ] || continue; " +
-      "read -r m < \"$d/model_name\" 2>/dev/null || m=\"\"; " +
-      "read -r c < \"$d/capacity_level\" 2>/dev/null || c=\"\"; " +
-      "read -r s < \"$d/status\" 2>/dev/null || s=\"\"; " +
-      "read -r o < \"$d/online\" 2>/dev/null || o=\"0\"; " +
-      "read -r sr < \"$d/serial_number\" 2>/dev/null || sr=\"\"; " +
-      "echo \"{\\\"found\\\":true,\\\"model\\\":\\\"$m\\\",\\\"capacity\\\":\\\"$c\\\",\\\"status\\\":\\\"$s\\\",\\\"online\\\":$o,\\\"serial\\\":\\\"$sr\\\"}\"; " +
-      "exit 0; done; echo '{\"found\":false}'"
-    ]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var txt = (text || "").trim()
-        if (!txt) return
-        try {
-          var res = JSON.parse(txt)
-          if (res.found) {
-            root.driverFound = true
-            root.driverModel = res.model || ""
-            root.driverCapacityLevel = res.capacity || ""
-            root.driverStatus = res.status || ""
-            root.driverOnline = res.online === 1
-            root.driverSerial = res.serial || ""
-          } else {
-            root.driverFound = false
-            root.driverCapacityLevel = ""
-            root.driverStatus = ""
-            root.driverOnline = false
-          }
-        } catch (e) {
-          // ignore parse errors
-        }
-      }
-    }
-  }
-
-  function refreshDriver() {
-    if (!driverReader.running) {
-      driverReader.running = true
-    }
-  }
-
-  // Dual-cadence polling: fast (15s) when card is open, relaxed (120s) in background
-  property Timer driverPollTimer: Timer {
-    interval: root.panelOpen ? 15000 : 120000
-    repeat: true
-    running: true
-    onTriggered: root.refreshDriver()
-  }
-
   Component.onCompleted: {
-    refreshDriver()
+    console.info("MX Ergo: model loaded with categorical battery display and Hyprland reload recovery")
     checkLowLatency()
     configLoader.running = true
+    configReadStartCheck.restart()
     sleepMonitor.running = true
+    sleepStartCheck.restart()
   }
 }

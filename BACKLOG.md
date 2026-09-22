@@ -1,36 +1,33 @@
-# Backlog & Status Ledger
+# Development status
 
-## Current Status: Work in progress / В разработке
+The plugin remains a development candidate (manifest `1.0.0`). Marketplace preparation is local; no submission approval is implied.
 
-Public development snapshot. Manifest version: `1.0.0`. Stable release readiness is not established.
+## Implemented and covered by local checks
 
-## Before a stable release
+- Reactive BlueZ/UPower telemetry with HID identity matching and explicit unknown/disconnected states.
+- Approximate battery categories; no fabricated percentages or full-battery gauge.
+- Five-button diagram, replacement editor, explicit draft commits and return after selection.
+- Three-page panel using the ROG Cetra width and host theme/typography.
+- Automatic language preference, ten native language names and explicit script-aware fallback.
+- Keyboard traversal of header/languages/editor, accessible button/checkbox/slider metadata, visible failure and Retry states.
+- Bounded logind-listener restart, suspend cancellation and native-only reconnect.
+- Single-flight Hyprland settings recovery after config reload, with bounded verification and retries.
+- Portable device defaults and TTS paths; shell-quoted shortcut operands.
+- Bounded validated preferences, serialized atomic saves and preserved prior file on write failure.
+- Optional root-owned Bluetooth helper, explicit Polkit actions and physical-adapter recovery journal.
+- Production-function, isolated filesystem/process, locale, QML and Qt diagram checks in `tests/run.sh`.
 
-- [ ] Diagnose and fix reported text appearing over the plugin.
-- [ ] Match sysfs telemetry to the configured MX Ergo instead of the first Logitech battery node.
-- [ ] Remove author-machine assumptions from device defaults, reconnect fallback, TTS paths, and low-latency tuning.
-- [ ] Verify unknown battery and charging states in the live panel.
-- [ ] Test the actual model logic and complete runtime lifecycle checks.
-- [ ] Reconcile handbook and module documentation with current behavior.
+## Before Marketplace submission
 
-## Implemented
+- [x] Independent read-only review of the privileged helper/client/installer/policy (GPT-5.5, explicit routing exception); fixture-isolation finding fixed and rechecked.
+- [x] Independent static review of the final QML/model/helper candidate through Gemini; no actionable findings, runtime limits retained.
+- [ ] Native end-to-end keyboard/accessibility review across pages and language picker.
+- [ ] Multi-monitor, vertical bar, display hotplug and additional scale checks.
+- [ ] Live optional-profile enable/restore and udev reapply on an authorized test adapter. Installation alone does not establish those results.
+- [ ] Legacy profile migration on the development machine requires recognized-rule cleanup followed by a computer restart; original values were not recorded by the old code.
+- [ ] Recheck the earlier report of text appearing over the plugin during prolonged use; current screenshots alone cannot establish its cause.
+- [ ] Freeze the reviewed commit, push with approval, then submit the exact candidate with approval.
 
-- [x] Linux driver telemetry through periodic sysfs reads (`hid-logitech-hidpp`, `/sys/class/power_supply/hidpp_battery_*`).
-- [x] Accurate battery tier calculation (`Full`, `Normal`, `Low`, `Critical`) and charging state detection.
-- [x] Dual transport auto-detection: Bluetooth BLE (`046d:b01d`) and Logitech Unifying USB receiver (`046d:406f`).
-- [x] Button mapping configuration for 5 hardware buttons (Back, Forward, Middle, Tilt Left, Tilt Right).
-- [x] Ready action catalog (Workspaces, Window overview, Kill window, Float toggle, Mute).
-- [x] Configuration persistence in `~/.config/omarchy/mx-ergo.json`.
-- [x] Bar widget with connection icon, charging indicator, and three battery segments.
-- [x] Interactive card (`ErgoPanel.qml`) on Omarchy theme tokens (`Color.*`, `Style.*`).
-- [x] Hyprland 0.56.2 Lua integration (`hl.device({ name, sensitivity, accel_profile, natural_scroll })` and `o.bind(...)`).
-- [x] One-shot 250ms debounced slider input and 500ms debounced config writer.
-- [x] Complete keyboard navigation (`PanelKeyCatcher`: Tab, Arrows, Enter, Escape).
-- [x] 10 language localizations (`en`, `ru`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`).
-- [x] Automated test suite (`tests/run.sh`) with 8 verification stages.
-- [x] Zero hardcoded hex colors and zero symlinks.
-- [x] Upstream bug #9441 lockscreen guard.
+## Documented limitations
 
-## Planned Enhancements
-
-- [ ] **DPI Presets:** Optional quick-selector for standard trackball DPI steps (e.g. 380 DPI, 440 DPI, 512 DPI) mapped to Hyprland sensitivity increments.
+Exact charge and battery health are unavailable through the current interface. Global Hyprland button bindings affect other mice; removal needs a configuration reload to restore file-defined mappings. Config read/write errors, binding recovery failures and stopped sleep monitoring are visible in the panel. Hardware DPI is not controlled by this plugin; sensitivity is a compositor multiplier.

@@ -3,6 +3,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+const runtime = {};
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'I18n.js'), 'utf8').replace(/^\.pragma library\s*/, ''), runtime);
 
 const localesDir = path.join(__dirname, '..', 'locales');
 const indexPath = path.join(localesDir, 'index.json');
@@ -27,6 +30,7 @@ for (const loc of requiredLocales) {
   const locFile = path.join(localesDir, index[loc].file);
   const locJson = JSON.parse(fs.readFileSync(locFile, 'utf8'));
   for (const key of enKeys) {
+    assert.equal(runtime.strings[loc][key], locJson[key], `Runtime/catalog mismatch: ${loc}.${key}`);
     assert.ok(locJson[key] !== undefined, `Locale '${loc}' is missing key '${key}'`);
     assert.ok(typeof locJson[key] === 'string' && locJson[key].trim().length > 0,
       `Locale '${loc}' has empty translation for key '${key}'`);

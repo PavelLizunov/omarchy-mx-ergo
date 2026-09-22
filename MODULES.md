@@ -6,37 +6,35 @@ Start with the row matching the component to inspect or modify. Read the listed 
 
 | Component | Role | Consumer / Check |
 | --- | --- | --- |
-| `BarWidget.qml` | Entry point for Omarchy Quattro bar. Hosts compact status icon, percentage text, and `KeyboardPanel` popup card. | `manifest.json`; `tests/run.sh`, `qmllint` |
-| `ErgoModel.qml` | Single state owner. Native Linux `hid-logitech-hidpp` sysfs driver integration, BlueZ BLE, UPower, button mappings, and Hyprland pointer controls. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
-| `ErgoPanel.qml` | Interactive popup card. Displays connection badge, battery progress bar, MAC address, button mapping controls, and pointer controls. Includes full keyboard traversal. | `BarWidget.qml`; `qmllint`, visual review |
+| `BarWidget.qml` | Entry point for Omarchy Quattro bar. Hosts compact connection/charging icons and `KeyboardPanel` popup card. | `manifest.json`; `tests/run.sh`, `qmllint` |
+| `ErgoModel.qml` | Single state owner. Native BlueZ BLE/UPower telemetry, HID identity matching, button mappings, and Hyprland pointer controls. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
+| `ErgoPanel.qml` | Popup presentation and navigation: Buttons / Pointer / Device pages, replacement button editor, explicit shortcut/command drafts and automatic return to the diagram after an explicit choice. Uses PanelHero, 380-unit width and shared tokens. Tab navigation includes the header, language picker, errors, pages and editor, and keeps focused controls in view. | `BarWidget.qml`; `qmllint`, visual review |
+| `TrackballMap.qml` | Device-independent diagram: centered illustration, balanced callouts, five physical hotspots and selection signal. Does not write settings. Uses `assets/trackball-map.png`. | `ErgoPanel.qml`; `tests/ui/tst_trackball.qml`, visual review |
 | `I18n.js` | Internationalization dictionary and helper. Bundles 10 languages (`en`, `ru`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`) with fallback. | `ErgoModel.qml`, `ErgoPanel.qml`; `tests/i18n-completeness.js` |
+| `system/omarchy-mx-ergo-bluetooth` | Optional root-owned profile helper. Fixed operations, physical adapter identity, baseline journal, atomic configuration and pending recovery. | `scripts/bluetooth-client.py`; `tests/bluetooth-profile.py` |
+| `scripts/config-store.py` | Bounded preference validation and atomic writes, called by managed reader/writer processes. | `ErgoModel.qml`; `tests/config-store.py` |
+| `scripts/apply-settings.py` | Single request application and bounded Hyprland readback/retry. | `ErgoModel.qml`; `tests/test_apply_settings.py`, `tests/hyprland-reload.js` |
+| `scripts/bluetooth-client.py` | Unprivileged trust check and fixed argv dispatcher. Missing helper never triggers installation or elevated plugin code. | `ErgoModel.qml`, compatibility `scripts/low-latency.sh`; profile/model tests |
 | `locales/` | Standardized localization catalogs in JSON format with `index.json`. | `I18n.js`; `tests/i18n-completeness.js` |
 
 ## Data Flow & Invariants
 
-```
-[Linux hid-logitech-hidpp sysfs] --> driverReader Process \
-[BlueZ D-Bus GATT]               --> Quickshell.Bluetooth  --> ErgoModel.qml (Single Owner)
-[UPower D-Bus HID++]             --> Quickshell.Services.UPower /    |
-                                                                     | (Reactive QML bindings)
-                                                                     v
-                                                           [BarWidget & ErgoPanel]
-                                                                     |
-                                                                     | (Hyprland Lua Dispatch)
-                                                                     v
-                                                           [hyprctl eval 'hl.device(...) / o.bind(...)']
-```
-
-1. **Linux Driver Telemetry:** Kernel driver `hid-logitech-hidpp` exports `/sys/class/power_supply/hidpp_battery_*` with discrete `capacity_level` and `status`. Telemetry is read directly with fallback to UPower and BlueZ.
-2. **Strict Uncertainty Handling:** When disconnected, battery percentage evaluates strictly to `null`. It is NEVER coerced to 0% or false.
-3. **Dual Transport Support:** Automatically detects whether the trackball is connected via Bluetooth BLE (`046d:b01d`) or Logitech Unifying USB receiver (`046d:406f`).
-4. **Hardware Button Mapping:** Configures 5 buttons (`mouse:275`, `mouse:276`, `mouse:274`, `mouse:278`, `mouse:279`) with action dispatching into Hyprland Lua and config persistence.
-5. **Injection-Proof Execution:** Discrete `argv` execution without shell string interpolation; strict JSON stringification for Lua literals and MAC regex validation.
+- `Quickshell.Bluetooth` owns Bluetooth connection and battery reports; `Quickshell.Services.UPower` owns kernel battery state.
+- `PowerDevice.qml` reads HID identity metadata only, using native `FileView`. Exactly one identity must match before UPower data is used.
+- `Battery.js` maps recognized reports to approximate categories shown in the main label; a secondary hint distinguishes them from an exact charge measurement. Numeric UPower percentages are not used.
+- `ErgoModel.qml` owns these bindings, controller profile operations, and the existing Hyprland controls. `ErgoPanel.qml` and `BarWidget.qml` render the model.
+- `scripts/low-latency.sh --status <adapter>` checks actual controller settings without authorization. `--enable`, `--disable` and explicit `--remove-legacy` dispatch to the separately installed root-owned helper through Polkit. Restoration uses the saved physical identity even if the adapter number changes. See README for persistence and limitations.
 
 ## Test Infrastructure
 
 - `tests/run.sh`: Master test gate running syntax checks, manifest validation, symlink guards, color guards, model contract assertions, i18n completeness, qmllint, and lockscreen guards.
-- `tests/model-contract.js`: Automated unit test for model math, null contracts, clamping, and Lua command formatting.
+- `tests/model-contract.js`: I18n and production QML shortcut, Lua and reconnect functions.
+- `tests/panel-navigation.js`: Production page/editor transitions, draft isolation, keyboard traversal and invalid selections.
+- `tests/ui/tst_trackball.qml`: Actual QtQuick callout/hotspot interaction, balanced geometry, translations and connector alignment.
+- `tests/battery.js`: Production battery functions and QML identity/connection bindings, including unknown/disconnect/conflicting reports.
+- `tests/bluetooth-profile.py`: Actual controller helper in isolated sysfs/etc fixtures, including errors and partial application.
+- `tests/sleep-lifecycle.js`: Production suspend cancellation, resume gates and finite listener retries.
+- `tests/config-model.js`: Serialized save queue, startup handling and failure/retry states.
 - `tests/i18n-completeness.js`: Verifies parity across all 10 locales.
-- `tests/qml-lint.py`: Isolated `qmllint` validation with mock shell imports.
+- `tests/qml-lint.py`: Isolated `qmllint` validation with copied installed shell imports; known host dynamic-type warnings are filtered; unknown members on concrete QML types fail.
 - `tests/lockscreen-guard.sh`: Verifies lockscreen detection logic against upstream bug #9441.

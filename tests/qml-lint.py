@@ -10,7 +10,7 @@ import tempfile
 import sys
 
 root = pathlib.Path(__file__).resolve().parent.parent
-with tempfile.TemporaryDirectory(prefix="mx-ergo-qml-", dir="/tmp/opencode") as tmp:
+with tempfile.TemporaryDirectory(prefix="mx-ergo-qml-") as tmp:
     imports = pathlib.Path(tmp)
     for name in ("Commons", "Ui"):
         shutil.copytree(pathlib.Path("/usr/share/omarchy/shell") / name, imports / "qs" / name)
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix="mx-ergo-qml-", dir="/tmp/opencode") as 
                 continue
             if "unqualified access" in msg.lower():
                 continue
-            if "member" in msg.lower() and "not found on type" in msg.lower():
+            if "member" in msg.lower() and 'not found on type "QObject"' in msg:
                 continue
             print(f"{path.name}:{warning.get('line')}: {cat}: {msg}")
             errors += 1
