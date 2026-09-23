@@ -4,7 +4,37 @@
 
 A hardware plugin for Omarchy Quattro shell designed for the **Logitech MX Ergo** multi-device wireless trackball connected via Bluetooth BLE or Logitech Unifying Receiver.
 
-<img src="assets/preview.png" alt="MX Ergo panel with approximate charge and five button assignments" width="330">
+<a href="preview.png"><img src="preview.png" alt="MX Ergo buttons panel in the light theme" width="330"></a>
+
+## Screenshots
+
+These are 2× renders of the actual `ErgoPanel.qml` using test states that match the supplied captures. Each rendered image links to its full-size PNG; the original capture is linked below it. Small color or layout differences are expected because the QML component is rendered again rather than sharpening the original pixels.
+
+### Light theme
+
+<table>
+  <tr>
+    <td><strong>Buttons</strong><br><a href="assets/screenshots/qml-2x/light-buttons-2x.png"><img src="assets/screenshots/qml-2x/light-buttons-2x.png" alt="Light theme, buttons page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/light-buttons.png">Original capture</a></td>
+    <td><strong>Pointer</strong><br><a href="assets/screenshots/qml-2x/light-pointer-2x.png"><img src="assets/screenshots/qml-2x/light-pointer-2x.png" alt="Light theme, pointer page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/light-pointer.png">Original capture</a></td>
+  </tr>
+  <tr>
+    <td><strong>Device</strong><br><a href="assets/screenshots/qml-2x/light-device-2x.png"><img src="assets/screenshots/qml-2x/light-device-2x.png" alt="Light theme, device page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/light-device.png">Original capture</a></td>
+    <td><strong>Middle-click editor</strong><br><a href="assets/screenshots/qml-2x/light-button-editor-2x.png"><img src="assets/screenshots/qml-2x/light-button-editor-2x.png" alt="Light theme, middle-click editor, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/light-button-editor.png">Original capture</a></td>
+  </tr>
+</table>
+
+### Dark theme
+
+<table>
+  <tr>
+    <td><strong>Buttons</strong><br><a href="assets/screenshots/qml-2x/dark-buttons-2x.png"><img src="assets/screenshots/qml-2x/dark-buttons-2x.png" alt="Dark theme, buttons page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/dark-buttons.png">Original capture</a></td>
+    <td><strong>Pointer</strong><br><a href="assets/screenshots/qml-2x/dark-pointer-2x.png"><img src="assets/screenshots/qml-2x/dark-pointer-2x.png" alt="Dark theme, pointer page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/dark-pointer.png">Original capture</a></td>
+  </tr>
+  <tr>
+    <td><strong>Device</strong><br><a href="assets/screenshots/qml-2x/dark-device-2x.png"><img src="assets/screenshots/qml-2x/dark-device-2x.png" alt="Dark theme, device page, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/dark-device.png">Original capture</a></td>
+    <td><strong>Middle-click editor</strong><br><a href="assets/screenshots/qml-2x/dark-button-editor-2x.png"><img src="assets/screenshots/qml-2x/dark-button-editor-2x.png" alt="Dark theme, middle-click editor, QML render at 2×" width="280"></a><br><a href="assets/screenshots/original/dark-button-editor.png">Original capture</a></td>
+  </tr>
+</table>
 
 ## Features
 
@@ -53,6 +83,26 @@ Plugin assets and helpers resolve relative to their QML source; the checkout fol
 On the tested Omarchy host, a plugin rescan can reuse cached QML after a source edit. If an update appears ineffective, restart the shell once while unlocked with `omarchy restart shell` (the bar briefly disappears). Verify that `quickshell log -p /usr/share/omarchy/shell -t 50` contains `MX Ergo: model loaded with categorical battery display and Hyprland reload recovery`. Subsequent Hyprland configuration reloads should log `MX Ergo: restoring settings after Hyprland reload` and restore the mappings automatically.
 
 The plugin ID is `io.github.pavellizunov.mx-ergo`. Use Omarchy's plugin controls to enable or disable it. Before removal, use **Restore original settings** and resolve any pending restoration. Removing the plugin alone does not uninstall the optional helper or remove its system configuration. Saved preferences remain in `~/.config/omarchy/mx-ergo.json`.
+
+## Installation and removal
+
+This plugin runs unsandboxed with the user's permissions inside the shared Omarchy shell. Review the source, dependency list, and command behavior above before enabling it.
+
+Install and enable the plugin with Omarchy's plugin manager:
+
+```bash
+omarchy plugin add https://github.com/PavelLizunov/omarchy-mx-ergo.git --enable
+```
+
+Update an installed copy with `omarchy plugin update io.github.pavellizunov.mx-ergo`. This follows the repository's current default branch; it does not pin a Marketplace-reviewed commit.
+
+Before removal, restore the optional Bluetooth profile in the Device page and wait until its state is **Off** with no pending restoration. Disable the plugin, then reload the normal Hyprland configuration to restore configuration-defined button mappings. Remove the plugin with:
+
+```bash
+omarchy plugin remove io.github.pavellizunov.mx-ergo
+```
+
+The optional helper is installed and removed separately; see [Removing the optional helper](#removing-the-optional-helper). Plugin removal does not delete saved preferences or revert arbitrary commands run through the custom Command action.
 
 ## Known limitations
 

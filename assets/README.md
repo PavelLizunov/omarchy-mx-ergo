@@ -13,3 +13,9 @@ The body is vertically compressed by 10% and centered in the canvas to match the
 `TrackballMap.qml` draws all labels, callout lines and selectable targets separately using the host theme. No assignment is baked into the image. Its normalized button coordinates refer to this exact 1024 × 1536 image, including transparent margins; replacing or cropping the image requires rechecking those coordinates.
 
 The illustration identifies compatible hardware; Logitech and Logi marks belong to their respective owner. This community plugin is not an official Logitech application.
+
+## Screenshots
+
+`screenshots/original/` contains the supplied UI captures. `screenshots/qml-2x/` contains 2× images rendered from `ErgoPanel.qml` with test states matching those captures. The original and rendered files are kept separately so the two sources remain easy to compare. The root `preview.png` is the light-theme buttons render used by the Marketplace and README.
+
+The screenshots show Logitech and Logi product marks for hardware identification. Those marks remain the property of their respective owners; the repository license does not grant rights to third-party marks. This community plugin is not an official Logitech application.

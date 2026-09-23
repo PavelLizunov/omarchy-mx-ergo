@@ -6,11 +6,11 @@ Local draft only. Read `RELEASE-REVIEW.md` and finish its acceptance items befor
 - Name: Logitech MX Ergo
 - Plugin ID: `io.github.pavellizunov.mx-ergo`
 - Manifest version: `1.0.0` — development candidate
-- Commit: **not frozen; do not submit the old repository HEAD**
+- Commit: **record the exact commit selected for Marketplace submission; do not submit a different snapshot**
 - Kind: bar-widget
 - Category: Hardware
-- Tags: trackball, bluetooth, logitech, input, battery
-- Preview: `assets/preview.png`
+- Tags: bar, quickshell, power-management
+- Preview: `preview.png` (root Marketplace preview; optional)
 
 ## Description
 
