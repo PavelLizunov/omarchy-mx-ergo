@@ -51,7 +51,7 @@ Item {
     id: device
     objectName: "trackballIllustration"
     x: (root.width - width) / 2
-    y: middleCallout.height + root.gap * 4
+    y: middleCallout.height + root.gap * 2
     width: root.width * 0.70
     height: width * 1.5
     source: Qt.resolvedUrl("assets/trackball-map.png")
@@ -148,7 +148,7 @@ Item {
         font.pixelSize: root.actionSize
         color: root.foreground
         opacity: 0.85
-        maximumLineCount: 2
+        maximumLineCount: callout.info.compact === true ? 2 : 4
         elide: Text.ElideRight
         wrapMode: Text.Wrap
       }

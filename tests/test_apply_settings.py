@@ -45,6 +45,86 @@ def _make_binds_list():
 
 class TestApplySettings(unittest.TestCase):
 
+    def shortcut(self, key='F12', mask=4):
+        return {'key': key, 'modmask': mask,
+                'keys': ' + '.join([name for bit, name in app.MODIFIERS if mask & bit] + [key])}
+
+    def keyboard_bind(self, key='F12', mask=4, arg='500'):
+        return {'key': key, 'keycode': 0, 'modmask': mask, 'submap': '', 'release': True,
+                'repeat': False, 'dispatcher': '__lua', 'arg': arg, 'description': app.PROFILE_DESCRIPTION}
+
+    @patch.object(app, '_run_bounded')
+    def test_shortcut_conflicts_before_mutation(self, run):
+        foreign = self.keyboard_bind(); foreign['description'] = 'User binding'
+        for changed in [foreign, {**foreign, 'submap': 'resize'},
+                        {**foreign, 'key': '', 'keycode': 96},
+                        {**foreign, 'key': '', 'catch_all': True}]:
+            run.return_value = (0, json.dumps([changed]))
+            payload = json.dumps({'lua': 'do end', 'expected': VALID_KEYS, 'profileShortcut': self.shortcut()})
+            code, out = self.run_main_with_args(['apply-settings.py', payload])
+            self.assertEqual(code, 1)
+            self.assertEqual(out['error'], 'shortcut_conflict')
+            self.assertTrue(all(c.args[0] == ['hyprctl', '-j', 'binds'] for c in run.call_args_list))
+            run.reset_mock()
+
+    @patch.object(app, '_run_bounded')
+    def test_shortcut_owned_cleanup_guard_and_readback(self, run):
+        owned = self.keyboard_bind()
+        run.return_value = (0, json.dumps([owned]))
+        lua = app._prepare_shortcut(self.shortcut('F11'))
+        self.assertIn('owned.arg ~= "500"', lua)
+        self.assertIn('owned:unbind()', lua)
+        self.assertNotIn('hl.unbind(', lua)
+        self.assertIn(app.PROFILE_COMMAND, lua)
+        # A forged identical label without our Lua handle must fail before any mutation.
+        proof = """
+local changes = 0
+hl = {bind=function() changes=changes+1 end, dsp={exec_cmd=function() end}}
+local ok,err = pcall(function()
+%s
+end)
+assert(not ok and string.find(err, 'shortcut_conflict'))
+assert(changes == 0)
+""" % lua
+        checked = subprocess.run(['lua', '-'], input=proof, text=True, capture_output=True, timeout=5)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        # Matching real ownership can remove precisely this combination and create the new one.
+        proof = """
+local removes, creates = 0,0
+_G.mx_ergo_profile_shortcut = {arg='500',description=%s,unbind=function() removes=removes+1 end}
+hl = {bind=function(keys,cmd,opts)
+    assert(keys=='CTRL + F11' and cmd==%s and opts.release==true)
+    creates=creates+1; return {}
+end,dsp={exec_cmd=function(cmd) return cmd end}}
+%s
+assert(removes==1 and creates==1)
+""" % (json.dumps(app.PROFILE_DESCRIPTION), json.dumps(app.PROFILE_COMMAND), lua)
+        checked = subprocess.run(['lua', '-'], input=proof, text=True, capture_output=True, timeout=5)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        run.return_value = (0, json.dumps(_make_binds_list() + [owned]))
+        self.assertTrue(app._check_binds(VALID_KEYS, self.shortcut(), True)[0])
+        self.assertFalse(app._check_binds(VALID_KEYS, None, True)[0])
+        for update in [{'release': False}, {'repeat': True}, {'dispatcher': 'exec'}, {'arg': 'bad'}]:
+            run.return_value = (0, json.dumps(_make_binds_list() + [{**owned, **update}]))
+            self.assertFalse(app._check_binds(VALID_KEYS, self.shortcut(), True)[0])
+
+    @patch.object(app, '_run_bounded')
+    def test_profile_mouse_release_verification(self, run):
+        expected = {**VALID_KEYS, 'mouse:275': {'description': 'MX Ergo: Next Profile',
+                    'release': True, 'dispatcher': '__lua'}}
+        binds = _make_binds_list()
+        binds[0].update(expected['mouse:275']); binds[0]['arg'] = '200'
+        run.return_value = (0, json.dumps(binds))
+        self.assertTrue(app._check_binds(expected)[0])
+        binds[0]['repeat'] = True
+        run.return_value = (0, json.dumps(binds))
+        self.assertFalse(app._check_binds(expected)[0])
+        for key, mask, keys in [('F25', 4, 'CTRL + F25'), ('F12', True, 'SHIFT + F12'),
+                                ('F12', 128, 'CTRL + F12'), ('F12', 4, 'CTRL + F12;id')]:
+            payload = json.dumps({'lua': 'do end', 'expected': VALID_KEYS,
+                                 'profileShortcut': {'key': key, 'modmask': mask, 'keys': keys}})
+            with self.assertRaises(ValueError): app._validate_payload(payload)
+
     def run_main_with_args(self, args):
         with patch.object(sys, "argv", args):
             with patch("sys.stdout", new_callable=io.StringIO) as mock_out:

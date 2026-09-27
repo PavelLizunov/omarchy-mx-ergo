@@ -1,0 +1,16 @@
+{
+  "codex": {
+    "destination": "/home/slovn/.codex/skills/omarchy-plugin-patterns",
+    "sha256": {
+      "SKILL.md": "eb61ec7c0a3768a2f13c9a3895c584139774d86e41c77b2ae407844718466a81",
+      "README.md": "b646d0d674bbecb122bfafb5dadb3c1a8fb1521eeee06833ea42e96889cd2177"
+    }
+  },
+  "opencode": {
+    "destination": "/home/slovn/.config/opencode/skills/omarchy-plugin-patterns",
+    "sha256": {
+      "SKILL.md": "622d18c0c43b440fffe38c611243211e7057715c03db943238136f78b14b6f23",
+      "README.md": "38036e801824b76f8ba96ed3171b6280b871a3e6a23fe91be2d6698db6c2e512"
+    }
+  }
+}

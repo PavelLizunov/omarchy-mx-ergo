@@ -20,13 +20,15 @@ assert.equal(I18n.t('connected', 'ru'), 'Подключено');
 assert.equal(I18n.t('connected', 'de'), 'Verbunden');
 assert.equal(I18n.t('connected', 'unknown_lang'), 'Connected'); // fallback to en
 assert.equal(I18n.t('button_mapping', 'ru'), 'НАСТРОЙКА КНОПОК');
-assert.equal(I18n.t('action_workspace_next', 'ru'), 'След. воркспейс');
+assert.equal(I18n.t('action_workspace_next', 'ru'), 'Следующий рабочий стол');
 assert.equal(I18n.t('connect_device', 'ru'), 'Подключить трекбол');
-assert.equal(I18n.t('auto_reconnect', 'ru'), 'Автоподключение при пробуждении');
+assert.equal(I18n.t('auto_reconnect', 'ru'), 'Автоподключение после запуска и пробуждения');
 assert.equal(I18n.t('connect_device', 'en'), 'Connect Trackball');
 
 // Exercise the actual QML functions, never a test copy of the implementation.
 const source = fs.readFileSync(path.join(__dirname, '..', 'ErgoModel.qml'), 'utf8');
+const Profiles = {};
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'ButtonProfiles.js'), 'utf8').replace(/^\.pragma library\s*/, ''), Profiles);
 const root = { sensitivity: .25, accelProfile: 'flat', naturalScroll: false,
   hyprDeviceName: 'test-device', configHome: '/tmp/user config',
   connected: false, isConnecting: false, btDevice: null, targetAddress: '' };
@@ -36,8 +38,8 @@ for (const button of ['Back', 'Forward', 'Middle', 'TiltLeft', 'TiltRight']) {
   root['buttonCustomCmd' + button] = '';
 }
 const dispatches = [];
-const context = vm.createContext({root, Quickshell: {execDetached: args => dispatches.push(Array.from(args))},
-  connectingResetTimer: {restart() {}}});
+const context = vm.createContext({root, Profiles, Quickshell: {execDetached: args => dispatches.push(Array.from(args))},
+  connectingResetTimer: {restart() {}}, BluetoothDeviceState: { Connecting: 2 }});
 for (const name of ['shellQuote', 'shortcutToWtype', 'getCustomShortcut', 'getCustomCommand',
                     'getButtonAction', 'buildBindSnippet', 'buildSettingsRequest', 'reconnectDevice']) {
   const fn = source.match(new RegExp('^  function ' + name + '\\([^]*?^  \\}', 'm'));
@@ -69,9 +71,11 @@ root.targetAddress = 'AA:BB:CC:DD:EE:FF'; context.reconnectDevice();
 assert.equal(dispatches.length, 0, 'Unknown native device requires pairing/discovery, never a detached connect');
 root.isConnecting = false;
 let nativeConnects = 0;
-root.btDevice = {address: root.targetAddress, connect() {nativeConnects++;}};
+root.btDevice = {address: root.targetAddress, state: 0, connect() {nativeConnects++; this.state = 2;}};
+root.canReconnect = true;
+root.canRecover = false;
 context.reconnectDevice();
-assert.equal(nativeConnects, 1);
+assert.equal(nativeConnects, 1, 'Native reconnect must not require the single-adapter CLI recovery gate');
 assert.equal(dispatches.length, 0, 'Native connect must not launch a competing helper');
 context.reconnectDevice(); assert.equal(nativeConnects,1,'Busy guard');
 root.isConnecting=false; root.sleeping=true; context.reconnectDevice(); assert.equal(nativeConnects,1,'Sleep guard');

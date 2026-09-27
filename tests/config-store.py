@@ -15,6 +15,61 @@ spec.loader.exec_module(store)
 
 
 class Preferences(unittest.TestCase):
+    def profile_config(self):
+        profile = {'id': 'main', 'name': 'Основной',
+                   'buttons': {k: 'default' for k in store.BUTTONS},
+                   'customShortcuts': {k: '' for k in store.BUTTONS},
+                   'customCommands': {k: '' for k in store.BUTTONS}}
+        profile['buttons']['back'] = 'profile_next'
+        profile['buttons']['forward'] = 'custom_command'
+        profile['customCommands']['forward'] = 'printf "Привет"'
+        return {'version': 2, 'activeProfileId': 'main', 'profileShortcut': 'CTRL + F12',
+                'profiles': [profile], 'sensitivity': 0, 'autoReconnect': False}
+
+    def test_profiles_roundtrip_and_validation(self):
+        value = self.profile_config()
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'profiles.json'
+            store.write(path, json.dumps(value))
+            self.assertEqual(store.read(path), value)
+        bad = []
+        for key, val in [('version', True), ('version', 3), ('activeProfileId', 'missing'),
+                         ('profiles', []), ('profiles', None), ('profileShortcut', 12),
+                         ('profileShortcut', 'a'*257)]:
+            cfg = self.profile_config(); cfg[key] = val; bad.append(cfg)
+        for key, val in [('id', '../outside'), ('name', ''), ('name', 'a'*81), ('name', 'a\n'),
+                         ('buttons', {'back': 'mute'}), ('customShortcuts', None)]:
+            cfg = self.profile_config(); cfg['profiles'][0][key] = val; bad.append(cfg)
+        cfg = self.profile_config(); cfg['profiles'] *= 2; bad.append(cfg)
+        cfg = self.profile_config(); cfg['buttons'] = {}; bad.append(cfg)
+        cfg = self.profile_config(); del cfg['profileShortcut']; bad.append(cfg)
+        for cfg in bad:
+            with self.subTest(cfg=cfg), self.assertRaises(ValueError): store.validate(json.dumps(cfg))
+
+    def test_profile_count_and_serialized_size_bounds(self):
+        cfg = self.profile_config()
+        template = cfg['profiles'][0]
+        cfg['profiles'] = [{**template, 'id': 'p'+str(i)} for i in range(32)]
+        cfg['activeProfileId'] = 'p0'
+        self.assertEqual(len(store.validate(json.dumps(cfg))['profiles']), 32)
+        cfg['profiles'].append({**template, 'id': 'overflow'})
+        with self.assertRaises(ValueError): store.validate(json.dumps(cfg))
+        # Compact input can fit while the persisted pretty JSON exceeds the cap.
+        cfg = self.profile_config()
+        cfg['profiles'] = []
+        for i in range(29):
+            p = json.loads(json.dumps(template)); p['id'] = 'p'+str(i)
+            p['customCommands']['back'] = 'x'*1730
+            cfg['profiles'].append(p)
+        cfg['activeProfileId'] = 'p0'
+        raw = json.dumps(cfg, separators=(',', ':'))
+        self.assertLess(len(raw.encode()), store.MAX_BYTES)
+        self.assertGreater(len(json.dumps(cfg, ensure_ascii=False, indent=2).encode()), store.MAX_BYTES)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/'preferences.json'; path.write_text('{}')
+            with self.assertRaises(ValueError): store.write(path, raw)
+            self.assertEqual(path.read_text(), '{}')
+
     def test_roundtrip_unicode_false_and_zero(self):
         value = {'sensitivity': 0, 'autoReconnect': False, 'naturalScroll': False,
                  'accelProfile': 'flat', 'buttons': {'back': 'custom_command'},

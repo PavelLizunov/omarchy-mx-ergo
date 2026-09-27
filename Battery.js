@@ -19,12 +19,15 @@ function matches(info, target) {
   return !target || info.address === String(target).toUpperCase()
 }
 
-function iconTier(icon) {
-  // Installed Quickshell does not expose UPower.BatteryLevel. IconName is a
-  // conservative categorical fallback; UPower.Percentage may be synthetic.
-  var match = /^battery-(full|good|low|caution|empty)(?:-charged)?(?:-symbolic)?$/.exec(String(icon || ""))
-  if (!match) return ""
-  return { full: "full", good: "normal", low: "low", caution: "critical", empty: "critical" }[match[1]]
+function levelTier(level) {
+  switch (level) {
+    case "Full": return "full"
+    case "High":
+    case "Normal": return "normal"
+    case "Low": return "low"
+    case "Critical": return "critical"
+    default: return ""
+  }
 }
 
 function reportedTier(value) {
@@ -35,9 +38,9 @@ function reportedTier(value) {
   return "critical"
 }
 
-function tier(connected, charging, upIcon, btAvailable, btValue) {
+function tier(connected, charging, capacityLevel, upIcon, btAvailable, btValue) {
   if (!connected || charging || /-charging(?:-symbolic)?$/.test(String(upIcon || ""))) return ""
-  var up = iconTier(upIcon)
+  var up = levelTier(capacityLevel)
   var bt = btAvailable ? reportedTier(btValue) : ""
   // Conflicting sources must not hide a low-battery report behind Full.
   var levels = ["critical", "low", "normal", "full"]

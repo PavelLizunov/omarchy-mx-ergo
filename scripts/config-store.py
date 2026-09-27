@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 from pathlib import Path
 import signal
 import stat
@@ -14,7 +15,37 @@ BUTTONS = {'back', 'forward', 'middle', 'tiltLeft', 'tiltRight'}
 ACTIONS = {'default', 'workspace_next', 'workspace_prev', 'window_close', 'window_float',
            'window_fullscreen', 'window_next', 'overview', 'screenshot', 'media_play_pause',
            'media_next', 'media_prev', 'mute', 'tab_next', 'tab_prev', 'browser_back',
-           'browser_forward', 'custom_shortcut', 'custom_command'}
+           'browser_forward', 'custom_shortcut', 'custom_command', 'profile_next'}
+
+
+def valid_map(key, value, complete=False):
+    if not isinstance(value, dict) or not set(value) <= BUTTONS:
+        return False
+    if complete and set(value) != BUTTONS:
+        return False
+    limit = 256 if key == 'customShortcuts' else 2048
+    return all(isinstance(v, str) and '\x00' not in v and
+               (v in ACTIONS if key == 'buttons' else len(v) <= limit)
+               for v in value.values())
+
+
+def valid_profiles(value):
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
+        return False
+    ids = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {'id', 'name', 'buttons', 'customShortcuts', 'customCommands'}:
+            return False
+        identity = item['id']
+        name = item['name']
+        if not isinstance(identity, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', identity) or identity in ids:
+            return False
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or any(ord(c) < 32 for c in name):
+            return False
+        ids.add(identity)
+        if not all(valid_map(key, item[key], complete=True) for key in ('buttons', 'customShortcuts', 'customCommands')):
+            return False
+    return True
 
 
 def validate(raw):
@@ -23,6 +54,10 @@ def validate(raw):
     cfg = json.loads(raw)
     if not isinstance(cfg, dict):
         raise ValueError('Preferences must be an object')
+    v2 = 'version' in cfg
+    if v2 and (type(cfg['version']) is not int or cfg['version'] != 2
+               or not {'profiles', 'activeProfileId', 'profileShortcut'} <= set(cfg)):
+        raise ValueError('Invalid preferences version')
     for key, value in cfg.items():
         if key == 'sensitivity':
             valid = type(value) in (int, float) and math.isfinite(value) and -1 <= value <= 1
@@ -31,12 +66,18 @@ def validate(raw):
         elif key in ('naturalScroll', 'autoReconnect'):
             valid = type(value) is bool
         elif key in ('buttons', 'customShortcuts', 'customCommands'):
-            valid = isinstance(value, dict) and set(value) <= BUTTONS
-            if valid:
-                limit = 256 if key == 'customShortcuts' else 2048
-                valid = all(isinstance(v, str) and '\x00' not in v and
-                            (v in ACTIONS if key == 'buttons' else len(v) <= limit)
-                            for v in value.values())
+            valid = not v2 and valid_map(key, value)
+        elif key == 'version':
+            valid = v2
+        elif key == 'profiles':
+            valid = v2 and valid_profiles(value)
+        elif key == 'activeProfileId':
+            profiles = cfg.get('profiles')
+            valid = v2 and isinstance(value, str) and isinstance(profiles, list) and any(
+                isinstance(p, dict) and p.get('id') == value for p in profiles
+            )
+        elif key == 'profileShortcut':
+            valid = v2 and isinstance(value, str) and len(value) <= 256 and '\x00' not in value
         else:
             valid = False
         if not valid:
@@ -60,6 +101,9 @@ def read(path):
 
 def write(path, raw):
     cfg = validate(raw)
+    rendered = json.dumps(cfg, ensure_ascii=False, indent=2) + '\n'
+    if len(rendered.encode('utf-8')) > MAX_BYTES:
+        raise ValueError('Preferences exceed 64 KiB')
     path.parent.mkdir(parents=True, exist_ok=True)
     # Never follow a final symlink or replace a special file.
     if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -67,8 +111,7 @@ def write(path, raw):
     fd, name = tempfile.mkstemp(prefix='.mx-ergo-', dir=path.parent)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            json.dump(cfg, stream, ensure_ascii=False, indent=2)
-            stream.write('\n')
+            stream.write(rendered)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)

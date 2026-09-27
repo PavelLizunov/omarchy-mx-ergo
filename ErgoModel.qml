@@ -7,6 +7,7 @@ import Quickshell.Hyprland
 import Quickshell.Services.UPower
 import "I18n.js" as I18n
 import "Battery.js" as Battery
+import "ButtonProfiles.js" as Profiles
 
 // Single state owner for Logitech MX Ergo trackball.
 // Reactive BlueZ/UPower telemetry and Hyprland pointer/button controls.
@@ -39,6 +40,8 @@ QtObject {
   property bool configLoadFailed: false
   property bool configSaveFailed: false
   property bool configWriting: false
+  property bool configStored: false
+  readonly property bool configPending: saveDebounce.running || configWriting || pendingConfig !== ""
   property bool sleeping: false
   property bool shuttingDown: false
   property bool sleepMonitorFailed: false
@@ -78,7 +81,38 @@ QtObject {
 
   // Auto-reconnect on system wake / recovery
   property bool autoReconnect: true
+  property bool startupRecoveryAttempted: false
+  property var startupRecoveryDevice: null
+  property var wakeRetryDevice: null
   property bool isConnecting: false
+  property string recoveryStage: ""
+  property string recoveryResult: ""
+  property var recoveryDevice: null
+  property var recoveryAdapter: null
+  property string recoveryTargetAddress: ""
+  property bool recoveryScanStarted: false
+  property bool recoverySeenTarget: false
+  property string recoveryOtherAddress: ""
+  property bool recoveryOtherMultiple: false
+  property var recoveryOtherPaired: null
+  property var recoveryOtherBonded: null
+  property bool recoveryStopping: false
+  property bool recoveryCleanupEscalated: false
+  property string recoveryAbortResult: ""
+  property double recoveryStartedAt: 0
+  readonly property bool recoveryBusy: recoveryStage !== "" || recoveryStopping
+  readonly property string recoveryScanNote: recoveryResult !== "" && recoveryScanStarted
+    ? root.t(recoverySeenTarget ? "recovery_target_seen" : "recovery_target_not_seen") : ""
+  readonly property string recoveryOtherNote: {
+    if (recoveryResult === "" || recoveryOtherAddress === "") return ""
+    if (recoveryOtherMultiple) return root.t("recovery_other_multiple")
+    function flag(value) {
+      return root.t(value === null ? "battery_unknown" : (value ? "state_yes" : "state_no"))
+    }
+    return root.t("recovery_other_seen") + " " + recoveryOtherAddress + " ("
+      + "Paired=" + flag(recoveryOtherPaired) + ", "
+      + "Bonded=" + flag(recoveryOtherBonded) + ")"
+  }
 
   // User configurable button actions
   property string buttonBack: "default"
@@ -101,9 +135,193 @@ QtObject {
   property string buttonCustomCmdTiltLeft: ""
   property string buttonCustomCmdTiltRight: ""
 
+  // The active properties above are the editor's view of one profile.
+  property var buttonProfiles: []
+  property string activeProfileId: "main"
+  property string profileShortcut: ""
+  property var profileTransaction: null
+  property string profileError: ""
+  property string profileRetryId: ""
+  property string profileRetryRemoveId: ""
+  property double profileLastSwitchAt: 0
+  readonly property bool profileBusy: profileTransaction !== null
+  readonly property string activeProfileName: {
+    var item = Profiles.find(root.buttonProfiles, root.activeProfileId)
+    return item ? item.name : root.t("profile_main")
+  }
+
+  function captureButtonProfile() {
+    var item = Profiles.profile(root.activeProfileId, root.activeProfileName, null)
+    Profiles.keys.forEach(function(key) {
+      item.buttons[key] = root.getButtonAction(key)
+      item.customShortcuts[key] = root.getCustomShortcut(key)
+      item.customCommands[key] = root.getCustomCommand(key)
+    })
+    return item
+  }
+
+  function storeActiveProfile() {
+    var item = root.captureButtonProfile()
+    if (!root.buttonProfiles.length) root.buttonProfiles = [item]
+    else root.buttonProfiles = root.buttonProfiles.map(function(p) { return p.id === item.id ? item : p })
+  }
+
+  function loadButtonProfile(item) {
+    var names = {back: "Back", forward: "Forward", middle: "Middle", tiltLeft: "TiltLeft", tiltRight: "TiltRight"}
+    Profiles.keys.forEach(function(key) {
+      var name = names[key]
+      root["button" + name] = item.buttons[key]
+      root["buttonCustomShortcut" + name] = item.customShortcuts[key]
+      root["buttonCustomCmd" + name] = item.customCommands[key]
+    })
+  }
+
+  function loadProfileConfig(cfg) {
+    var data = Profiles.fromConfig(cfg, root.t("profile_main"))
+    root.buttonProfiles = data.profiles
+    root.activeProfileId = data.activeProfileId
+    root.profileShortcut = data.profileShortcut
+    root.loadButtonProfile(Profiles.find(data.profiles, data.activeProfileId))
+  }
+
+  function validProfileName(name) {
+    var value = String(name || "").trim()
+    return value.length > 0 && value.length <= 80 && !/[\u0000-\u001f]/.test(value) ? value : ""
+  }
+
+  function createProfile(name) {
+    if (!root.configReadComplete || root.profileBusy || root.sleeping || root.shuttingDown
+        || root.buttonProfiles.length >= Profiles.maxProfiles) return false
+    var value = root.validProfileName(name)
+    if (!value) { root.profileError = "profile_invalid_name"; return false }
+    root.storeActiveProfile()
+    var base = "profile-" + Date.now().toString(36)
+    var id = base
+    for (var serial = 1; Profiles.find(root.buttonProfiles, id); serial++) id = base + "-" + serial
+    var item = Profiles.profile(id, value, root.captureButtonProfile())
+    root.buttonProfiles = root.buttonProfiles.concat([item])
+    return root.selectProfile(id)
+  }
+
+  function renameProfile(name) {
+    if (!root.configReadComplete || root.profileBusy) return false
+    var value = root.validProfileName(name)
+    if (!value) { root.profileError = "profile_invalid_name"; return false }
+    root.storeActiveProfile()
+    root.buttonProfiles = root.buttonProfiles.map(function(item) {
+      var result = Profiles.copy(item)
+      if (result.id === root.activeProfileId) result.name = value
+      return result
+    })
+    root.profileError = ""
+    saveDebounce.restart()
+    return true
+  }
+
+  function deleteProfile() {
+    if (root.profileBusy || root.buttonProfiles.length <= 1) return false
+    var index = root.buttonProfiles.findIndex(function(p) { return p.id === root.activeProfileId })
+    var next = root.buttonProfiles[(index + 1) % root.buttonProfiles.length]
+    return root.selectProfile(next.id, root.activeProfileId)
+  }
+
+  function selectProfile(id, removeId) {
+    if (!root.configReadComplete || root.profileBusy || root.sleeping || root.shuttingDown) return false
+    root.storeActiveProfile()
+    if (!Profiles.find(root.buttonProfiles, id) || id === root.activeProfileId) return false
+    root.profileTransaction = {fromId: root.activeProfileId, toId: id,
+      fromShortcut: root.profileShortcut, toShortcut: root.profileShortcut,
+      removeId: removeId || "", rollback: false}
+    root.profileError = ""
+    root.profileRetryId = ""
+    root.profileRetryRemoveId = ""
+    root.applyAllSettings()
+    return true
+  }
+
+  function nextProfile(fromWheel) {
+    var now = Date.now()
+    if (root.profileBusy || root.buttonProfiles.length <= 1 || now - root.profileLastSwitchAt < 250
+        || (!fromWheel && profileWheelLatch.running)) return false
+    var index = root.buttonProfiles.findIndex(function(p) { return p.id === root.activeProfileId })
+    var result = root.selectProfile(root.buttonProfiles[(index + 1) % root.buttonProfiles.length].id)
+    if (result) root.profileLastSwitchAt = now
+    return result
+  }
+
+  function nextProfileFromWheel() {
+    var latched = profileWheelLatch.running
+    profileWheelLatch.restart()
+    return latched ? false : root.nextProfile(true)
+  }
+
+  property Timer profileWheelLatch: Timer {
+    id: profileWheelLatch
+    interval: 750
+    repeat: false
+  }
+
+  function setProfileShortcut(value) {
+    if (!root.configReadComplete || root.profileBusy || root.sleeping || root.shuttingDown) return false
+    var parsed
+    try { parsed = Profiles.shortcut(value) }
+    catch (_) { root.profileError = "profile_invalid_shortcut"; return false }
+    var text = parsed ? parsed.keys : ""
+    if (text === root.profileShortcut) return true
+    root.storeActiveProfile()
+    root.profileTransaction = {fromId: root.activeProfileId, toId: root.activeProfileId,
+      fromShortcut: root.profileShortcut, toShortcut: text, removeId: "", rollback: false}
+    root.profileError = ""
+    root.profileRetryId = ""
+    root.profileRetryRemoveId = ""
+    root.applyAllSettings()
+    return true
+  }
+
+  function setProfileSwitchForAll(btnKey) {
+    if (!root.configReadComplete || root.profileBusy || Profiles.keys.indexOf(btnKey) < 0) return
+    root.storeActiveProfile()
+    root.buttonProfiles = root.buttonProfiles.map(function(item) {
+      var result = Profiles.copy(item)
+      result.buttons[btnKey] = "profile_next"
+      return result
+    })
+    root.loadButtonProfile(Profiles.find(root.buttonProfiles, root.activeProfileId))
+    root.applyAllSettings()
+    saveDebounce.restart()
+  }
+
+  function finishProfileApply(ok, error) {
+    var tx = root.profileTransaction
+    if (!tx) return
+    if (ok) {
+      if (!tx.rollback) {
+        root.activeProfileId = tx.toId
+        root.profileShortcut = tx.toShortcut
+        if (tx.removeId) root.buttonProfiles = root.buttonProfiles.filter(function(p) { return p.id !== tx.removeId })
+        root.loadButtonProfile(Profiles.find(root.buttonProfiles, root.activeProfileId))
+      } else root.profileError = root.profileError === "profile_shortcut_conflict"
+        ? "profile_shortcut_conflict" : "profile_switch_restored"
+      root.profileTransaction = null
+      saveDebounce.restart()
+    } else if (!tx.rollback) {
+      root.profileError = error === "shortcut_conflict" ? "profile_shortcut_conflict" : "profile_switch_failed"
+      root.profileRetryId = tx.toId !== tx.fromId ? tx.toId : ""
+      root.profileRetryRemoveId = tx.removeId
+      root.profileTransaction = Object.assign({}, tx, {rollback: true})
+      root.applyAllSettings()
+    } else {
+      root.profileTransaction = null
+      root.profileError = "profile_rollback_failed"
+      root.settingsRecoveryFailed = true
+    }
+  }
+
   // Reactive devices from native C++ services
+  readonly property var btAdaptersList: Bluetooth.adapters ? Bluetooth.adapters.values : []
   readonly property var btDevicesList: Bluetooth.devices ? Bluetooth.devices.values : []
   readonly property var upDevicesList: UPower.devices ? UPower.devices.values : []
+  property string observedBtAddress: ""
 
   // Matched Bluetooth device
   readonly property var btDevice: {
@@ -119,7 +337,19 @@ QtObject {
         matches.push(d)
       }
     }
-    return matches.length === 1 ? matches[0] : null
+    if (matches.length === 1) return matches[0]
+    if (target !== "") return null
+    var connected = matches.filter(function(device) {
+      return device.connected && device.paired && device.bonded
+    })
+    if (connected.length === 1) return connected[0]
+    var bonded = matches.filter(function(device) { return device.paired && device.bonded })
+    if (bonded.length === 1) return bonded[0]
+    if (connected.length > 1 || root.observedBtAddress === "") return null
+    var previous = matches.filter(function(device) {
+      return String(device.address || "").toUpperCase() === root.observedBtAddress
+    })
+    return previous.length === 1 ? previous[0] : null
   }
 
   property var powerCandidates: []
@@ -142,20 +372,23 @@ QtObject {
     var target = root.btDevice ? root.btDevice.address : root.targetAddress
     var available = root.powerCandidates.filter(function(item) {
       return item.device && item.device.ready && item.device.isPresent && item.identity
-        && (item.identity.transport !== "ble" || (root.btDevice && root.btDevice.connected))
+        && (item.identity.transport !== "ble" || root.bleLinked)
     })
     var matches = available.filter(function(item) { return Battery.matches(item.identity, target) })
     if (matches.length === 1) return matches[0]
-    if (matches.length > 1 || (root.btDevice && root.btDevice.connected)) return null
+    if (matches.length > 1 || root.bleLinked) return null
     // Bluetooth MAC and receiver serial differ. With no active BLE link, a
     // single receiver-side MX Ergo can be selected by its verified product ID.
     var receivers = available.filter(function(item) { return item.identity.transport === "unifying" })
     return receivers.length === 1 ? receivers[0] : null
   }
   readonly property var upDevice: matchedPower ? matchedPower.device : null
+  // Connection status reports the BlueZ link. Pairing validity is shown
+  // separately and remains a prerequisite for recovery of a saved bond.
+  readonly property bool bleLinked: !!btDevice && !!btDevice.connected
 
   readonly property string transport: {
-    if (btDevice && btDevice.connected) return "ble"
+    if (bleLinked) return "ble"
     // A cached BLE battery is not evidence of a receiver connection.
     if (matchedPower && matchedPower.identity.transport === "unifying") return "unifying"
     return ""
@@ -163,31 +396,467 @@ QtObject {
 
   readonly property bool connected: transport !== ""
   readonly property bool deviceFound: btDevice !== null || matchedPower !== null
+  readonly property string connectionStatusText: {
+    if (root.targetAddress !== "" && !root.btDevice) return root.t("status_record_missing")
+    if (root.btDevice && root.btDevice.connected && (!root.btDevice.paired || !root.btDevice.bonded))
+      return root.t("status_pairing_incomplete")
+    if (root.transport === "unifying") return root.transportText
+    if (root.bleLinked) return root.t("status_link_reported")
+    if (root.btDevice && root.btDevice.paired && root.btDevice.bonded)
+      return root.t("status_bonded_disconnected")
+    if (root.btDevice) return root.t("status_pairing_required")
+    return root.t("status_selection_unavailable")
+  }
+  function logConnectionState() {
+    var device = root.btDevice
+    console.info("MX Ergo: selected=" + (device ? String(device.address) : "none")
+      + " target=" + (root.targetAddress || "auto")
+      + " BlueZ connected=" + (device ? device.connected : "unknown")
+      + " paired=" + (device ? device.paired : "unknown")
+      + " bonded=" + (device ? device.bonded : "unknown")
+      + " transport=" + (root.transport || "none")
+      + " battery=" + (root.batteryTier || "unknown"))
+  }
+  onConnectionStatusTextChanged: Qt.callLater(root.logConnectionState)
+  onBatteryTierChanged: Qt.callLater(root.logConnectionState)
   readonly property var isCharging: !connected || !upDevice || upDevice.state === UPowerDeviceState.Unknown
     ? null : upDevice.state === UPowerDeviceState.Charging
 
   onConnectedChanged: {
     if (root.connected) {
+      root.startupRecoveryAttempted = true
+      startupRecoveryTimer.stop()
+      root.startupRecoveryDevice = null
       root.isConnecting = false
       connectingResetTimer.stop()
       wakeReconnectTimer.stop()
       wakeStage2Timer.stop()
+      wakeRetryDeadline.stop()
+      root.wakeRetryDevice = null
     }
   }
 
-  readonly property bool canReconnect: !!root.btDevice && /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(root.btDevice.address)
+  readonly property bool canReconnect: !!root.btDevice
+    && /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(root.btDevice.address)
+    && !!root.btDevice.paired && !!root.btDevice.bonded
+    && !!root.btDevice.adapter && root.btDevice.adapter.enabled
+  readonly property bool canRecover: root.canReconnect
+    // bluetoothctl selects its own default adapter; only one adapter is safe.
+    && root.btAdaptersList.length === 1 && root.btDevice.adapter === root.btAdaptersList[0]
+  readonly property bool canStartRecovery: root.canRecover
+    && root.btDevice.state !== BluetoothDeviceState.Connecting
+    && root.btDevice.state !== BluetoothDeviceState.Disconnecting
+  onCanStartRecoveryChanged: root.scheduleStartupRecovery()
+  onConfigReadCompleteChanged: root.scheduleStartupRecovery()
+  onAutoReconnectChanged: root.scheduleStartupRecovery()
+
+  function scheduleStartupRecovery() {
+    if (root.startupRecoveryAttempted || !root.configReadComplete || !root.autoReconnect
+        || root.connected || root.sleeping || root.shuttingDown || !root.canStartRecovery) {
+      startupRecoveryTimer.stop()
+      return
+    }
+    if (!startupRecoveryTimer.running) {
+      root.startupRecoveryDevice = root.btDevice
+      startupRecoveryTimer.restart()
+    }
+  }
+
+  function startStartupRecovery() {
+    if (root.startupRecoveryAttempted || root.btDevice !== root.startupRecoveryDevice
+        || !root.configReadComplete || !root.autoReconnect
+        || root.connected || root.recoveryBusy || root.isConnecting || root.sleeping
+        || root.shuttingDown || !root.canStartRecovery) return
+    root.recoverDevice(false)
+  }
 
   function reconnectDevice() {
-    if (root.connected || root.isConnecting || root.sleeping || !root.btDevice) return
+    if (root.connected || root.isConnecting || root.recoveryBusy || root.sleeping || !root.canReconnect
+        || root.btDevice.state === BluetoothDeviceState.Connecting) return false
 
     var target = root.btDevice.address
     // Strict operand validation: must match valid 6-octet MAC address pattern
-    if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(target)) return
+    if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(target)) return false
 
     root.isConnecting = true
     connectingResetTimer.restart()
 
     root.btDevice.connect()
+    return true
+  }
+
+  function recoverySelectionValid() {
+    return !!root.recoveryDevice && root.btDevice === root.recoveryDevice
+      && !!root.recoveryAdapter && root.recoveryDevice.adapter === root.recoveryAdapter
+      && root.canRecover && String(root.recoveryDevice.address).toUpperCase() === root.recoveryTargetAddress
+  }
+
+  // Explicit, target-only recovery. BlueZ's link report and a fresh discovery
+  // report are recorded separately; neither proves that pointer input works.
+  function recoverDevice(allowDisconnect) {
+    if (!root.canStartRecovery || root.recoveryBusy || recoveryScanProcess.running || recoveryCancelProcess.running
+        || root.isConnecting || root.sleeping || root.shuttingDown
+        || (allowDisconnect === false && (root.btDevice.connected || root.connected))) return false
+    root.startupRecoveryAttempted = true
+    startupRecoveryTimer.stop()
+    root.startupRecoveryDevice = null
+    root.recoveryDevice = root.btDevice
+    root.recoveryAdapter = root.btDevice.adapter
+    root.recoveryTargetAddress = String(root.btDevice.address).toUpperCase()
+    root.recoveryStartedAt = Date.now()
+    console.info("MX Ergo recovery: start address=" + root.recoveryTargetAddress
+      + " source=" + (allowDisconnect === false ? "startup" : "manual")
+      + " BlueZ connected=" + root.recoveryDevice.connected)
+    if (root.targetAddress === "") root.observedBtAddress = root.recoveryTargetAddress
+    root.recoveryResult = ""
+    root.recoveryScanStarted = false
+    root.recoverySeenTarget = false
+    root.recoveryOtherAddress = ""
+    root.recoveryOtherMultiple = false
+    root.recoveryOtherPaired = null
+    root.recoveryOtherBonded = null
+    root.recoveryAbortResult = ""
+    wakeReconnectTimer.stop()
+    wakeStage2Timer.stop()
+    wakeRetryDeadline.stop()
+    root.wakeRetryDevice = null
+    if (root.recoveryDevice.connected) {
+      if (allowDisconnect === false) {
+        root.finishRecovery("recovery_link_reported")
+        return true
+      }
+      root.recoveryStage = "disconnecting"
+      recoveryStepTimer.interval = 5000
+      recoveryStepTimer.restart()
+      root.recoveryDevice.disconnect()
+    } else {
+      root.startRecoveryScan()
+    }
+    return true
+  }
+
+  function cancelRecovery() {
+    if (root.recoveryStage === "connecting" && root.recoveryDevice)
+      root.abortRecoveryConnect("recovery_cancelled")
+    else if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect")
+      root.finishRecovery("recovery_cancelled")
+  }
+
+  function abortRecoveryConnect(result) {
+    if (root.recoveryStage !== "connecting" || !root.recoveryDevice) return
+    root.recoveryAbortResult = result
+    console.info("MX Ergo recovery: cancelling pending Connect address="
+      + root.recoveryTargetAddress + " reason=" + result)
+    root.recoveryStage = "cancellingConnect"
+    root.recoveryStopping = true
+    recoveryStepTimer.interval = 15000
+    recoveryStepTimer.restart()
+    // BlueZ Device1.Disconnect cancels a pending Connect. Quickshell's
+    // disconnect() refuses this call while its Connected flag is false.
+    recoveryCancelProcess.command = ["/usr/bin/bluetoothctl", "--timeout", "10",
+      "disconnect", root.recoveryTargetAddress]
+    recoveryCancelProcess.running = true
+    if (recoveryScanProcess.running) recoveryScanProcess.running = false
+  }
+
+  function settleRecoveryAbort() {
+    if (root.recoveryStage !== "cancellingConnect" || recoveryCancelProcess.running) return
+    if (!root.recoveryDevice || root.btDevice !== root.recoveryDevice)
+      root.finishRecovery("recovery_cancel_unconfirmed")
+    else if (root.recoveryDevice.connected)
+      root.finishRecovery("recovery_cancel_unconfirmed")
+    else if (root.recoveryDevice.state !== BluetoothDeviceState.Connecting)
+      root.finishRecovery(root.recoveryAbortResult)
+  }
+
+  function startRecoveryScan() {
+    if (!root.recoverySelectionValid()) {
+      root.finishRecovery("recovery_unavailable")
+      return
+    }
+    root.recoveryStage = "startingScan"
+    console.info("MX Ergo recovery: starting owned LE scan address=" + root.recoveryTargetAddress)
+    recoveryStepTimer.interval = 5000
+    recoveryStepTimer.restart()
+    recoveryScanProcess.running = true
+  }
+
+  function beginRecoveryScanWindow() {
+    root.recoveryScanStarted = true
+    console.info("MX Ergo recovery: owned LE scan started address=" + root.recoveryTargetAddress)
+    root.recoveryStage = "scanning"
+    recoveryStepTimer.interval = 10000
+    recoveryStepTimer.restart()
+  }
+
+  function startRecoveryConnect() {
+    if (root.recoveryStage !== "scanning") return
+    if (!root.recoverySelectionValid()) {
+      root.finishRecovery("recovery_unavailable")
+      return
+    }
+    root.recoveryStage = "connecting"
+    console.info("MX Ergo recovery: Connect address=" + root.recoveryTargetAddress
+      + " freshReport=" + root.recoverySeenTarget)
+    recoveryStepTimer.interval = 35000
+    recoveryStepTimer.restart()
+    if (root.recoveryDevice.connected) root.finishRecovery("recovery_link_reported")
+    else root.recoveryDevice.connect()
+  }
+
+  function updateRecoveryOtherState() {
+    if (root.recoveryOtherAddress === "" || root.recoveryOtherMultiple) return
+    var list = root.btDevicesList
+    for (var i = 0; i < list.length; i++) {
+      var device = list[i]
+      if (device && String(device.address || "").toUpperCase() === root.recoveryOtherAddress) {
+        root.recoveryOtherPaired = !!device.paired
+        root.recoveryOtherBonded = !!device.bonded
+        return
+      }
+    }
+  }
+
+  function noteRecoveryOtherAddress(address) {
+    if (root.recoveryOtherAddress !== "" && root.recoveryOtherAddress !== address) {
+      root.recoveryOtherMultiple = true
+      return
+    }
+    root.recoveryOtherAddress = address
+    root.updateRecoveryOtherState()
+  }
+
+  function handleRecoveryScanLine(rawLine) {
+    if (root.recoveryStage === "") return
+    var line = String(rawLine).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim()
+    if (root.recoveryStage === "startingScan") {
+      if (line.indexOf("Failed to start discovery") !== -1 || line.indexOf("SetDiscoveryFilter failed") !== -1) {
+        root.finishRecovery("recovery_scan_start_failed")
+        return
+      }
+      if (line.indexOf("Discovery started") !== -1) root.beginRecoveryScanWindow()
+    }
+    if (!root.recoveryScanStarted) return
+
+    // Initial cached Device objects are printed before our scan starts. Accept
+    // only newly discovered names or fresh advertisement-derived changes.
+    var match = line.match(/^\[(NEW|CHG)\] Device ((?:[0-9A-F]{2}:){5}[0-9A-F]{2})\s+(.+)$/i)
+    if (!match) return
+    var detail = match[3]
+    if (match[1].toUpperCase() === "CHG" && !/^(RSSI|TxPower|AdvertisingFlags|ManufacturerData|ServiceData):/i.test(detail)) return
+    if (match[1].toUpperCase() === "NEW" && !/MX Ergo/i.test(detail)) return
+    var address = match[2].toUpperCase()
+    if (address === root.recoveryTargetAddress) {
+      root.recoverySeenTarget = true
+      console.info("MX Ergo recovery: saved address seen in owned scan address=" + address)
+      root.startRecoveryConnect()
+      return
+    }
+    if (/MX Ergo/i.test(detail)) {
+      root.noteRecoveryOtherAddress(address)
+      return
+    }
+    var list = root.btDevicesList
+    for (var i = 0; i < list.length; i++) {
+      var device = list[i]
+      if (device && String(device.address || "").toUpperCase() === address
+          && /MX Ergo/i.test(String(device.name || device.deviceName || ""))) {
+        root.noteRecoveryOtherAddress(address)
+        return
+      }
+    }
+  }
+
+  function finishRecovery(result) {
+    if (root.recoveryStage === "connecting" && root.recoveryDevice
+        && root.recoveryDevice.state === BluetoothDeviceState.Connecting
+        && result !== "recovery_link_reported") {
+      root.abortRecoveryConnect(result)
+      return
+    }
+    recoveryStepTimer.stop()
+    recoveryCleanupTimer.stop()
+    console.info("MX Ergo recovery: result=" + result
+      + " address=" + root.recoveryTargetAddress
+      + " freshReport=" + root.recoverySeenTarget
+      + " elapsedMs=" + (Date.now() - root.recoveryStartedAt))
+    root.recoveryStopping = recoveryScanProcess.running || recoveryCancelProcess.running
+    root.recoveryStage = ""
+    root.recoveryResult = result
+    root.recoveryDevice = null
+    root.recoveryAdapter = null
+    root.recoveryTargetAddress = ""
+    root.recoveryAbortResult = ""
+    if (recoveryScanProcess.running) {
+      root.recoveryCleanupEscalated = false
+      recoveryScanProcess.running = false
+    }
+    if (recoveryCancelProcess.running) {
+      root.recoveryCleanupEscalated = false
+      recoveryCancelProcess.running = false
+    }
+    if (root.recoveryStopping) recoveryCleanupTimer.restart()
+  }
+
+  property Timer recoveryStepTimer: Timer {
+    id: recoveryStepTimer
+    repeat: false
+    onTriggered: {
+      if (root.recoveryStage === "disconnecting") {
+        root.finishRecovery("recovery_disconnect_timeout")
+      } else if (root.recoveryStage === "startingScan") {
+        root.finishRecovery("recovery_scan_start_failed")
+      } else if (root.recoveryStage === "scanning") {
+        root.startRecoveryConnect()
+      } else if (root.recoveryStage === "connecting") {
+        root.finishRecovery("recovery_connect_timeout")
+      } else if (root.recoveryStage === "cancellingConnect") {
+        root.finishRecovery("recovery_cancel_unconfirmed")
+      }
+    }
+  }
+
+  // bluetoothctl owns one BlueZ discovery session even if another client scans.
+  // SIGTERM closes only this child's session; never write adapter.discovering.
+  property Process recoveryScanProcess: Process {
+    id: recoveryScanProcess
+    command: ["/usr/bin/bluetoothctl", "--timeout", "65", "scan", "le"]
+    stdout: SplitParser { onRead: function(line) { root.handleRecoveryScanLine(line) } }
+    stderr: SplitParser { onRead: function(line) { root.handleRecoveryScanLine(line) } }
+    onExited: {
+      if (root.recoveryStage === "startingScan") root.finishRecovery("recovery_scan_start_failed")
+      else if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect")
+        root.finishRecovery("recovery_scan_ended")
+      if (!recoveryCancelProcess.running && root.recoveryStage !== "cancellingConnect") {
+        root.recoveryStopping = false
+        recoveryCleanupTimer.stop()
+      }
+    }
+  }
+
+  property Process recoveryCancelProcess: Process {
+    id: recoveryCancelProcess
+    onExited: function(exitCode) {
+      if (root.recoveryStage === "cancellingConnect") {
+        if (exitCode !== 0) root.finishRecovery("recovery_cancel_unconfirmed")
+        else root.settleRecoveryAbort()
+      } else if (!recoveryScanProcess.running) {
+        root.recoveryStopping = false
+        recoveryCleanupTimer.stop()
+      }
+    }
+  }
+
+  property Timer recoveryCleanupTimer: Timer {
+    id: recoveryCleanupTimer
+    interval: 2000
+    repeat: false
+    onTriggered: {
+      if (!recoveryScanProcess.running && !recoveryCancelProcess.running) {
+        root.recoveryStopping = false
+      } else if (!root.recoveryCleanupEscalated) {
+        root.recoveryCleanupEscalated = true
+        if (recoveryScanProcess.running) recoveryScanProcess.signal(9)
+        if (recoveryCancelProcess.running) recoveryCancelProcess.signal(9)
+        restart()
+      } else {
+        root.recoveryResult = "recovery_cleanup_failed"
+      }
+    }
+  }
+
+  property Connections recoveryDeviceEvents: Connections {
+    target: root.recoveryDevice
+    function onStateChanged() {
+      if (root.recoveryStage === "cancellingConnect")
+        root.settleRecoveryAbort()
+      else if (root.recoveryStage === "disconnecting"
+          && root.recoveryDevice.state === BluetoothDeviceState.Connected)
+        root.finishRecovery("recovery_disconnect_failed")
+      else if (root.recoveryStage === "connecting"
+          && root.recoveryDevice.state === BluetoothDeviceState.Disconnected
+          && !root.recoveryDevice.connected)
+        root.finishRecovery("recovery_connect_failed")
+    }
+    function onConnectedChanged() {
+      if (root.recoveryStage === "cancellingConnect")
+        root.settleRecoveryAbort()
+      else if (root.recoveryStage === "disconnecting" && !root.recoveryDevice.connected)
+        root.startRecoveryScan()
+      else if (["startingScan", "scanning", "connecting"].indexOf(root.recoveryStage) >= 0
+          && root.recoveryDevice.connected && root.recoverySelectionValid())
+        root.finishRecovery("recovery_link_reported")
+    }
+    function onPairedChanged() {
+      if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect"
+          && !root.recoveryDevice.paired)
+        root.finishRecovery("recovery_unavailable")
+    }
+    function onBondedChanged() {
+      if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect"
+          && !root.recoveryDevice.bonded)
+        root.finishRecovery("recovery_unavailable")
+    }
+  }
+
+  property Connections recoveryAdapterEvents: Connections {
+    target: root.recoveryAdapter
+    function onEnabledChanged() {
+      if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect"
+          && !root.recoveryAdapter.enabled)
+        root.finishRecovery("recovery_unavailable")
+    }
+  }
+
+  onCanRecoverChanged: {
+    if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect"
+        && !root.canRecover)
+      root.finishRecovery("recovery_unavailable")
+  }
+  onTargetAddressChanged: {
+    if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect")
+      root.finishRecovery("recovery_unavailable")
+  }
+  onBtDevicesListChanged: {
+    if (root.recoveryStage !== "") root.updateRecoveryOtherState()
+  }
+  onBleLinkedChanged: {
+    if (root.bleLinked && root.targetAddress === "")
+      root.observedBtAddress = String(root.btDevice.address).toUpperCase()
+  }
+  onBtDeviceChanged: {
+    if (startupRecoveryTimer.running && root.btDevice !== root.startupRecoveryDevice) {
+      root.startupRecoveryAttempted = true
+      startupRecoveryTimer.stop()
+      root.startupRecoveryDevice = null
+    }
+    if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect"
+        && root.btDevice !== root.recoveryDevice)
+      root.finishRecovery("recovery_unavailable")
+    if (root.wakeRetryDevice && root.btDevice !== root.wakeRetryDevice) {
+      root.wakeRetryDevice = null
+      wakeStage2Timer.stop()
+      wakeRetryDeadline.stop()
+    }
+  }
+
+  property Connections wakeDeviceEvents: Connections {
+    target: root.wakeRetryDevice
+    function onStateChanged() {
+      if (root.wakeRetryDevice && root.btDevice === root.wakeRetryDevice
+          && !wakeStage2Timer.running
+          && root.wakeRetryDevice.state !== BluetoothDeviceState.Connecting)
+        root.finishWakeRetry()
+    }
+  }
+
+  function finishWakeRetry() {
+    var device = root.wakeRetryDevice
+    root.wakeRetryDevice = null
+    wakeRetryDeadline.stop()
+    if (device && root.btDevice === device && root.autoReconnect
+        && !root.connected && !root.sleeping && !root.shuttingDown)
+      root.reconnectDevice()
   }
 
   function setAutoReconnect(enabled) {
@@ -277,8 +946,9 @@ QtObject {
 
   // Every level is approximate: this MX Ergo interface does not expose verified SOC.
   readonly property string batteryTier: Battery.tier(root.connected, root.isCharging,
+    root.matchedPower ? root.matchedPower.capacityLevel : "",
     root.upDevice ? root.upDevice.iconName : "",
-    !!(root.btDevice && root.btDevice.connected && root.btDevice.batteryAvailable),
+    !!(root.bleLinked && root.btDevice.batteryAvailable),
     root.btDevice ? root.btDevice.battery : null)
   // Show the reported category; the hint explains that exact charge is unavailable.
   readonly property string batteryLevelText: Battery.label(root.connected, root.isCharging, root.batteryTier,
@@ -286,6 +956,15 @@ QtObject {
   readonly property string batteryReportText: root.batteryTier || root.isCharging
     ? root.t("battery_reported")
     : root.t("battery_estimate_hint")
+  readonly property string batterySourceDifference: {
+    if (!root.connected || !root.matchedPower || !root.bleLinked
+        || !root.btDevice.batteryAvailable) return ""
+    var hid = Battery.levelTier(root.matchedPower.capacityLevel)
+    var ble = Battery.reportedTier(root.btDevice.battery)
+    if (!hid || !ble || hid === ble) return ""
+    return "HID++: " + root.t("battery_" + hid)
+      + " · Bluetooth: " + root.t("battery_" + ble)
+  }
   readonly property string batteryIcon: root.isCharging ? "󰂄" : "󰂑"
 
   readonly property string transportText: {
@@ -329,6 +1008,7 @@ QtObject {
   // Button mapping actions catalog
   readonly property var availableActions: [
     "default",
+    "profile_next",
     "workspace_next",
     "workspace_prev",
     "window_close",
@@ -375,6 +1055,7 @@ QtObject {
   }
 
   function setButtonAction(btnKey, action) {
+    if (root.profileBusy || !root.configReadComplete) return
     var act = String(action || "default")
     if (root.availableActions.indexOf(act) < 0 && act !== "custom_shortcut" && act !== "custom_command") return
     if (btnKey === "back") root.buttonBack = act
@@ -382,11 +1063,13 @@ QtObject {
     else if (btnKey === "middle") root.buttonMiddle = act
     else if (btnKey === "tiltLeft") root.buttonTiltLeft = act
     else if (btnKey === "tiltRight") root.buttonTiltRight = act
+    root.storeActiveProfile()
     applyButtonBind(btnKey, act)
     saveDebounce.restart()
   }
 
   function setCustomShortcut(btnKey, shortcutStr) {
+    if (root.profileBusy || !root.configReadComplete) return
     var s = String(shortcutStr || "").trim()
     if (s.length > 256 || s.indexOf("\u0000") >= 0) return
     if (btnKey === "back") root.buttonCustomShortcutBack = s
@@ -398,6 +1081,7 @@ QtObject {
   }
 
   function setCustomCommand(btnKey, cmdStr) {
+    if (root.profileBusy || !root.configReadComplete) return
     var c = String(cmdStr || "").trim()
     if (c.length > 2048 || c.indexOf("\u0000") >= 0) return
     if (btnKey === "back") root.buttonCustomCmdBack = c
@@ -409,6 +1093,7 @@ QtObject {
   }
 
   function resetButtonToDefault(btnKey) {
+    if (root.profileBusy || !root.configReadComplete) return
     if (btnKey === "back") {
       root.buttonBack = "default"
       root.buttonCustomShortcutBack = ""
@@ -430,6 +1115,7 @@ QtObject {
       root.buttonCustomShortcutTiltRight = ""
       root.buttonCustomCmdTiltRight = ""
     }
+    root.storeActiveProfile()
     applyButtonBind(btnKey, "default")
     saveDebounce.restart()
   }
@@ -548,10 +1234,15 @@ QtObject {
   function applyAccelProfile() { applyAllSettings() }
   function applyNaturalScroll() { applyAllSettings() }
 
-  function buildBindSnippet(code, action, btnKey) {
+  function buildBindSnippet(code, action, btnKey, buttonProfile) {
     var lua = "pcall(function() hl.unbind(\"" + code + "\") end)\n"
     if (action === "default") {
       return lua
+    } else if (action === "profile_next") {
+      var axis = code === "mouse_left" || code === "mouse_right"
+      var command = "omarchy-shell io.github.pavellizunov.mx-ergo " + (axis ? "nextProfileFromWheel" : "nextProfile")
+      lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: Next Profile\", " + JSON.stringify(command)
+        + ", { release = " + (axis ? "false" : "true") + " })\n"
     } else if (action === "workspace_next") {
       lua += "o.bind(\"" + code + "\", \"MX Ergo: Next Workspace\", hl.dsp.focus({ workspace = \"e+1\" }))\n"
     } else if (action === "workspace_prev") {
@@ -585,7 +1276,7 @@ QtObject {
     } else if (action === "browser_forward") {
       lua += "o.bind(\"" + code + "\", \"MX Ergo: Browser Forward\", \"wtype -M alt -k Right\")\n"
     } else if (action === "custom_shortcut") {
-      var sc = getCustomShortcut(btnKey)
+      var sc = buttonProfile ? buttonProfile.customShortcuts[btnKey] : getCustomShortcut(btnKey)
       if (sc !== "") {
         var norm = sc.toUpperCase().replace(/,/g, " ").replace(/\+/g, " ").trim().replace(/\s+/g, " ")
         var wsMatch = norm.match(/^(SUPER|WIN|LOGO)\s+([0-9]+)$/)
@@ -635,7 +1326,7 @@ QtObject {
         }
       }
     } else if (action === "custom_command") {
-      var rawCmd = getCustomCommand(btnKey)
+      var rawCmd = buttonProfile ? buttonProfile.customCommands[btnKey] : getCustomCommand(btnKey)
       if (rawCmd !== "") {
         lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: Command\", " + JSON.stringify(rawCmd) + ")\n"
       }
@@ -646,6 +1337,8 @@ QtObject {
   function applyButtonBind(btnKey, action) { applyAllSettings() }
 
   function buildSettingsRequest() {
+    var tx = root.profileTransaction
+    var selected = tx ? Profiles.find(root.buttonProfiles, tx.rollback ? tx.fromId : tx.toId) : null
     var lua = "do\n"
     if (root.hyprDeviceName !== "") {
       var sensitivity = Number(root.sensitivity)
@@ -662,13 +1355,17 @@ QtObject {
     var expected = {}
     for (var code in buttons) {
       var key = buttons[code]
-      var snippet = buildBindSnippet(code, getButtonAction(key), key)
+      var action = selected ? selected.buttons[key] : getButtonAction(key)
+      var snippet = buildBindSnippet(code, action, key, selected)
       // Read the description from the same generated bind, including JSON escapes.
       var match = snippet.match(/o\.bind\([^,]+,\s*("(?:\\.|[^"\\])*")/)
       expected[code] = match ? JSON.parse(match[1]) : null
+      if (action === "profile_next") expected[code] = {description: expected[code], release: code !== "mouse_left" && code !== "mouse_right",
+        dispatcher: "__lua"}
       lua += snippet
     }
-    return { lua: lua + "end\n", expected: expected }
+    var shortcut = tx ? (tx.rollback ? tx.fromShortcut : tx.toShortcut) : root.profileShortcut
+    return { lua: lua + "end\n", expected: expected, profileShortcut: Profiles.shortcut(shortcut) }
   }
 
   property var pendingSettingsRequest: null
@@ -677,6 +1374,11 @@ QtObject {
   property bool settingsStopping: false
   property int settingsGeneration: 0
   property int settingsCapturedGeneration: -1
+  property int settingsVerifiedGeneration: -1
+  readonly property bool settingsPending: applyDebounce.running || settingsApplying || pendingSettingsRequest !== null
+  readonly property bool settingsVerified: settingsConfigured && settingsVerifiedGeneration === settingsGeneration
+    && !settingsPending && !settingsRecoveryFailed
+  property var settingsCapturedProfileTransaction: null
   property int settingsExitCode: -1
   property string settingsOutput: ""
   readonly property string settingsHelper: decodeURIComponent(Qt.resolvedUrl("scripts/apply-settings.py").toString().replace(/^file:\/\//, ""))
@@ -693,6 +1395,7 @@ QtObject {
       pendingSettingsRequest = null
       settingsRecoveryFailed = true
       console.warn("MX Ergo: invalid settings; application skipped")
+      if (root.profileBusy) root.finishProfileApply(false, "")
     }
   }
 
@@ -700,12 +1403,15 @@ QtObject {
     if (root.sleeping || root.shuttingDown || settingsApplying || settingsApplier.running || pendingSettingsRequest === null) return
     settingsApplying = true
     settingsCapturedGeneration = settingsGeneration
+    root.settingsCapturedProfileTransaction = root.profileTransaction
     settingsStopping = false
     settingsExitCode = -1
     settingsOutput = ""
     settingsApplier.command = ["/usr/bin/python3", "-I", root.settingsHelper, JSON.stringify(pendingSettingsRequest)]
     pendingSettingsRequest = null
-    settingsDeadline.interval = 40000
+    // Three attempts can each read conflicts, apply Lua, and read back (3 x 5s),
+    // plus 2/4s retry delays. Leave room for the complete bounded helper budget.
+    settingsDeadline.interval = 60000
     settingsDeadline.restart()
     settingsApplier.running = true
     settingsStartCheck.restart()
@@ -715,10 +1421,20 @@ QtObject {
     if (!settingsApplying || settingsApplier.running) return
     settingsStartCheck.stop()
     settingsDeadline.stop()
-    settingsApplying = false
     var ok = false
-    try { ok = settingsExitCode === 0 && JSON.parse(settingsOutput).ok === true } catch (_) {}
-    if (settingsCapturedGeneration === settingsGeneration) settingsRecoveryFailed = !ok
+    var error = ""
+    try {
+      var result = JSON.parse(settingsOutput)
+      ok = settingsExitCode === 0 && result.ok === true
+      error = result.error || ""
+    } catch (_) {}
+    if (settingsCapturedGeneration === settingsGeneration) {
+      settingsRecoveryFailed = !ok
+      if (ok) root.settingsVerifiedGeneration = settingsCapturedGeneration
+      if (root.settingsCapturedProfileTransaction && root.settingsCapturedProfileTransaction === root.profileTransaction)
+        root.finishProfileApply(ok, error)
+    }
+    settingsApplying = false
     if (ok) console.info("MX Ergo: settings applied and button bindings verified")
     else console.warn("MX Ergo: settings verification failed after bounded recovery")
     Qt.callLater(drainSettingsRequest)
@@ -745,7 +1461,7 @@ QtObject {
   }
   property Timer settingsDeadline: Timer {
     id: settingsDeadline
-    interval: 40000
+    interval: 60000
     onTriggered: {
       if (settingsApplier.running && settingsApplier.processId > 0) {
         settingsApplier.signal(root.settingsStopping ? 9 : 15)
@@ -757,11 +1473,20 @@ QtObject {
   }
   Component.onDestruction: {
     root.shuttingDown = true
+    root.recoveryStage = ""
+    recoveryStepTimer.stop()
+    recoveryCleanupTimer.stop()
+    recoveryScanProcess.running = false
+    recoveryCancelProcess.running = false
+    startupRecoveryTimer.stop()
     sleepRetry.stop()
     sleepStartCheck.stop()
     wakeReconnectTimer.stop()
     wakeStage2Timer.stop()
+    wakeRetryDeadline.stop()
+    root.wakeRetryDevice = null
     saveDebounce.stop()
+    profileWheelLatch.stop()
     applyDebounce.stop()
     sleepMonitor.running = false
     pendingSettingsRequest = null
@@ -772,35 +1497,19 @@ QtObject {
 
   // Config persistence (saves to ~/.config/omarchy/mx-ergo.json via safe discrete argv without shell execution)
   function saveConfig() {
+    if (!root.configReadComplete || root.profileBusy || root.configLoadFailed) return
+    root.storeActiveProfile()
     var cfg = {
-      "sensitivity": root.sensitivity,
-      "accelProfile": root.accelProfile,
-      "naturalScroll": root.naturalScroll,
-      "autoReconnect": root.autoReconnect,
-      "buttons": {
-        "back": root.buttonBack,
-        "forward": root.buttonForward,
-        "middle": root.buttonMiddle,
-        "tiltLeft": root.buttonTiltLeft,
-        "tiltRight": root.buttonTiltRight
-      },
-      "customShortcuts": {
-        "back": root.buttonCustomShortcutBack,
-        "forward": root.buttonCustomShortcutForward,
-        "middle": root.buttonCustomShortcutMiddle,
-        "tiltLeft": root.buttonCustomShortcutTiltLeft,
-        "tiltRight": root.buttonCustomShortcutTiltRight
-      },
-      "customCommands": {
-        "back": root.buttonCustomCmdBack,
-        "forward": root.buttonCustomCmdForward,
-        "middle": root.buttonCustomCmdMiddle,
-        "tiltLeft": root.buttonCustomCmdTiltLeft,
-        "tiltRight": root.buttonCustomCmdTiltRight
-      }
+      version: 2,
+      sensitivity: root.sensitivity,
+      accelProfile: root.accelProfile,
+      naturalScroll: root.naturalScroll,
+      autoReconnect: root.autoReconnect,
+      profiles: root.buttonProfiles,
+      activeProfileId: root.activeProfileId,
+      profileShortcut: root.profileShortcut
     }
-    var jsonStr = JSON.stringify(cfg, null, 2)
-    root.pendingConfig = jsonStr
+    root.pendingConfig = JSON.stringify(cfg, null, 2)
     drainConfigWrite()
   }
 
@@ -822,15 +1531,23 @@ QtObject {
 
   function finishConfigWrite(exitCode) {
     configWriteStartCheck.stop()
-    root.configWriting = false
     root.configSaveFailed = exitCode !== 0
+    root.configStored = exitCode === 0
+    root.configWriting = false
     if (exitCode === 0) root.configLoadFailed = false
     else console.warn("MX Ergo: preferences could not be saved")
     Qt.callLater(root.drainConfigWrite)
   }
   function retrySettings() {
+    if (root.profileRetryId && !root.profileBusy) {
+      root.selectProfile(root.profileRetryId, root.profileRetryRemoveId)
+      return
+    }
     if (root.configSaveFailed) root.saveConfig()
-    if (root.settingsRecoveryFailed) root.applyAllSettings()
+    if (root.settingsRecoveryFailed) {
+      root.profileError = ""
+      root.applyAllSettings()
+    }
   }
   property Timer configWriteStartCheck: Timer {
     id: configWriteStartCheck
@@ -871,27 +1588,8 @@ QtObject {
           if (typeof cfg.accelProfile === "string") root.accelProfile = cfg.accelProfile
           if (typeof cfg.naturalScroll === "boolean") root.naturalScroll = cfg.naturalScroll
           if (typeof cfg.autoReconnect === "boolean") root.autoReconnect = cfg.autoReconnect
-          if (cfg.buttons && typeof cfg.buttons === "object") {
-            if (cfg.buttons.back) root.buttonBack = cfg.buttons.back
-            if (cfg.buttons.forward) root.buttonForward = cfg.buttons.forward
-            if (cfg.buttons.middle) root.buttonMiddle = cfg.buttons.middle
-            if (cfg.buttons.tiltLeft) root.buttonTiltLeft = cfg.buttons.tiltLeft
-            if (cfg.buttons.tiltRight) root.buttonTiltRight = cfg.buttons.tiltRight
-          }
-          if (cfg.customShortcuts && typeof cfg.customShortcuts === "object") {
-            if (cfg.customShortcuts.back) root.buttonCustomShortcutBack = cfg.customShortcuts.back
-            if (cfg.customShortcuts.forward) root.buttonCustomShortcutForward = cfg.customShortcuts.forward
-            if (cfg.customShortcuts.middle) root.buttonCustomShortcutMiddle = cfg.customShortcuts.middle
-            if (cfg.customShortcuts.tiltLeft) root.buttonCustomShortcutTiltLeft = cfg.customShortcuts.tiltLeft
-            if (cfg.customShortcuts.tiltRight) root.buttonCustomShortcutTiltRight = cfg.customShortcuts.tiltRight
-          }
-          if (cfg.customCommands && typeof cfg.customCommands === "object") {
-            if (cfg.customCommands.back) root.buttonCustomCmdBack = cfg.customCommands.back
-            if (cfg.customCommands.forward) root.buttonCustomCmdForward = cfg.customCommands.forward
-            if (cfg.customCommands.middle) root.buttonCustomCmdMiddle = cfg.customCommands.middle
-            if (cfg.customCommands.tiltLeft) root.buttonCustomCmdTiltLeft = cfg.customCommands.tiltLeft
-            if (cfg.customCommands.tiltRight) root.buttonCustomCmdTiltRight = cfg.customCommands.tiltRight
-          }
+          root.loadProfileConfig(cfg)
+          root.configStored = true
           root.applyAllSettings()
         } catch (e) {
           root.configLoadFailed = true
@@ -921,8 +1619,14 @@ QtObject {
   function prepareForSleep(asleep) {
     root.sleeping = asleep
     if (asleep) {
+      root.startupRecoveryAttempted = true
+      startupRecoveryTimer.stop()
+      if (root.recoveryStage !== "" && root.recoveryStage !== "cancellingConnect")
+        root.finishRecovery("recovery_cancelled")
       wakeReconnectTimer.stop()
       wakeStage2Timer.stop()
+      wakeRetryDeadline.stop()
+      root.wakeRetryDevice = null
       if (settingsApplier.running) settingsApplier.signal(15)
     } else {
       root.sleepMonitorRestarts = 0
@@ -955,6 +1659,15 @@ QtObject {
     }
   }
 
+  // One owned, bounded scan after startup; a live or manually repaired link
+  // consumes the opportunity so an ordinary later disconnect does not scan.
+  property Timer startupRecoveryTimer: Timer {
+    id: startupRecoveryTimer
+    interval: 5000
+    repeat: false
+    onTriggered: root.startStartupRecovery()
+  }
+
   // Bounded reconnection attempts after the controller has had time to resume.
   property Timer wakeReconnectTimer: Timer {
     id: wakeReconnectTimer
@@ -962,9 +1675,12 @@ QtObject {
     repeat: false
     onTriggered: {
       if (root.autoReconnect && !root.connected && !root.sleeping) {
-        root.reconnectDevice()
-        // Second stage attempt after Bluetooth controller powers up
-        wakeStage2Timer.restart()
+        if (root.reconnectDevice()) {
+          root.wakeRetryDevice = root.btDevice
+          // Wait for the first Quickshell Connect to settle before retrying.
+          wakeStage2Timer.restart()
+          wakeRetryDeadline.restart()
+        }
       }
     }
   }
@@ -974,14 +1690,23 @@ QtObject {
     interval: 10000
     repeat: false
     onTriggered: {
-      if (root.autoReconnect && !root.connected && !root.sleeping) {
-        root.reconnectDevice()
-      }
+      if (root.wakeRetryDevice
+          && root.wakeRetryDevice.state !== BluetoothDeviceState.Connecting)
+        root.finishWakeRetry()
     }
+  }
+  property Timer wakeRetryDeadline: Timer {
+    id: wakeRetryDeadline
+    interval: 60000
+    repeat: false
+    onTriggered: { root.wakeRetryDevice = null }
   }
 
   Component.onCompleted: {
     console.info("MX Ergo: model loaded with categorical battery display and Hyprland reload recovery")
+    console.info("MX Ergo: named button profiles v2 ready")
+    Qt.callLater(root.logConnectionState)
+    root.loadProfileConfig(null)
     checkLowLatency()
     configLoader.running = true
     configReadStartCheck.restart()

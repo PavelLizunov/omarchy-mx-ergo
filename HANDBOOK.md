@@ -62,3 +62,26 @@ Keyboard handling is exercised by production-function and offscreen diagram test
 `apply-settings.py` reads at most 1 MiB of child output and kills/reaps a child on overflow, timeout or cancellation. Each invocation has a five-second deadline. The model adds a 40-second overall watchdog and at most one pending request. Successful readback verifies binding keys, global scope and descriptions, not the eventual effect of an external command.
 
 Bluetooth resume recovery makes at most two attempts, at approximately 2 and 12 seconds after resume. Reconnect uses only a known native BlueZ device. An eight-second busy guard prevents overlapping attempts. The logind listener has at most three restart attempts spaced by two seconds. Its failure is visible; successful startup clears the warning without resetting the retry budget. Sleep stops reconnect timers and cancels the current settings helper. Resume restarts configured settings application.
+
+## Named button profiles
+
+`ButtonProfiles.js` defines the five-key profile shape and strict global shortcut
+parser. `ErgoModel.qml` retains the active button properties for existing editor
+consumers. Switching builds a candidate request from the target profile without
+changing those properties. A generation-matched success commits the active ID;
+a failure schedules one rollback to the old profile. No second profile
+transaction is admitted during application/rollback. Metadata and draft button
+settings share the existing atomic single-writer preference path.
+
+`BarWidget.qml` owns the IPC handler, preserving open/close/show/hide/toggle and
+adding `nextProfile` and the wheel pulse wrapper `nextProfileFromWheel`. The
+keyboard helper keeps one Lua binding handle in the compositor's Lua state.
+Cleanup requires the callback ID from readback to match that live handle, and
+conflicts in any submap prevent removal. A compositor reload clears those runtime
+bindings; the existing reload event reapplies the selected profile and shortcut.
+
+In Hyprland 0.56.2, Lua command bindings are reported as `__lua` plus a registry ID.
+Wheel axes deliver only a press event, and keybind removal matches combinations
+across submaps. These constraints are reflected in the helper's ownership guards
+and the model's wheel latch. Sources: [LuaKeybind.cpp](https://github.com/hyprwm/Hyprland/blob/v0.56.2/src/config/lua/objects/LuaKeybind.cpp),
+[KeybindManager.cpp](https://github.com/hyprwm/Hyprland/blob/v0.56.2/src/managers/KeybindManager.cpp).

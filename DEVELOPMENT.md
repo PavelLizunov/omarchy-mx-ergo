@@ -12,6 +12,11 @@ QML colors come from Omarchy tokens (`Color`, `Style`, and the injected bar pale
 
 ## Verification
 
+For panel design/UX reviews, use the shared `omarchy-plugin-patterns` procedure
+with the [MX Ergo matrix](docs/mx-ergo-design-review-matrix.md).
+The [common-library extension](docs/omarchy-design-review-proposal/README.md)
+is installed in the shared OpenCode and Codex copies; invoke `$omarchy-plugin-patterns`.
+
 Run `./tests/run.sh` before accepting or committing implementation changes. Every check must exit zero. Passing isolated tests is not evidence of untested native lifecycle, hardware or accessibility behavior. See [release review](RELEASE-REVIEW.md) for the exact acceptance limits.
 
 Marketplace publication, Git pushes and system changes are separate actions from local development. Preparation does not authorize publication.

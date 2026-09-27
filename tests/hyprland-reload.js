@@ -4,9 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'ErgoModel.qml'), 'utf8');
+const Profiles = {};
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'ButtonProfiles.js'), 'utf8').replace(/^\.pragma library\s*/, ''), Profiles);
 const root = { sensitivity: 0.25, accelProfile: 'flat', naturalScroll: true,
   hyprDeviceName: 'test-mx-ergo', configReadComplete: false,
-  pendingSettingsRequest: null, settingsApplying: false, settingsGeneration: 0, settingsHelper: '/test/apply-settings.py', configHome: "/tmp/home with 'quote'/.config" };
+  pendingSettingsRequest: null, settingsApplying: false, settingsGeneration: 0, settingsVerifiedGeneration: -1, settingsConfigured: false, settingsHelper: '/test/apply-settings.py', configHome: "/tmp/home with 'quote'/.config" };
 for (const button of ['Back', 'Forward', 'Middle', 'TiltLeft', 'TiltRight']) {
   root['button' + button] = 'default';
   root['buttonCustomShortcut' + button] = '';
@@ -15,12 +17,12 @@ for (const button of ['Back', 'Forward', 'Middle', 'TiltLeft', 'TiltRight']) {
 const later = new Set();
 const applier = { running: false };
 const timer = { restart() {}, stop() {} };
-const context = vm.createContext({ root, console: { info() {}, warn() {} },
+const context = vm.createContext({ root, Profiles, console: { info() {}, warn() {} },
   Qt: { callLater: fn => later.add(fn) }, settingsApplier: applier,
-  settingsDeadline: timer, settingsStartCheck: timer });
+  settingsDeadline: timer, settingsStartCheck: timer, applyDebounce: {running:false} });
 // QML unqualified properties refer to root; use accessors rather than a copied model.
 for (const name of ['pendingSettingsRequest', 'settingsApplying', 'settingsStopping', 'settingsExitCode',
-  'settingsOutput', 'settingsRecoveryFailed', 'settingsGeneration', 'settingsCapturedGeneration']) {
+  'settingsOutput', 'settingsRecoveryFailed', 'settingsGeneration', 'settingsCapturedGeneration', 'settingsVerifiedGeneration', 'settingsConfigured']) {
   Object.defineProperty(context, name, { get: () => root[name], set: v => { root[name] = v; } });
 }
 for (const name of ['shellQuote', 'getButtonAction', 'getCustomShortcut', 'getCustomCommand', 'shortcutToWtype',
@@ -33,6 +35,15 @@ for (const name of ['shellQuote', 'getButtonAction', 'getCustomShortcut', 'getCu
   vm.runInContext((short || fn)[0], context);
   root[name] = context[name];
 }
+for (const name of ['settingsPending', 'settingsVerified']) {
+  const binding = source.match(new RegExp('^  readonly property bool ' + name + ': ([^]*?)(?=^  (?:property|readonly|function))', 'm'))[1].trim();
+  Object.defineProperty(root, name, {get: () => vm.runInContext(binding, context)});
+  Object.defineProperty(context, name, {get: () => root[name]});
+}
+assert.equal(root.settingsVerified, false, 'Defaults do not prove application');
+context.applyDebounce.running = true;
+assert.equal(root.settingsPending, true, 'Debounce is pending work');
+context.applyDebounce.running = false;
 function flush() { while(later.size) { const batch = [...later]; later.clear(); batch.forEach(fn => fn()); } }
 function finish(ok) {
   applier.running = false; root.settingsExitCode = ok ? 0 : 1;
@@ -51,8 +62,12 @@ root.settingsConfigured = true;
 root.buttonBack = 'custom_shortcut'; root.buttonCustomShortcutBack = 'SUPER + ALT + E';
 root.buttonForward = 'custom_command'; root.buttonCustomCmdForward = 'printf "example"';
 root.buttonTiltLeft = 'workspace_prev'; root.buttonTiltRight = 'workspace_next';
-context.deliver({name:'configreloaded'}); flush();
+context.deliver({name:'configreloaded'});
+assert.equal(root.settingsPending, true, 'Queued request is pending before callLater starts the helper');
+assert.equal(root.settingsVerified, false);
+flush();
 assert.equal(applier.running, true);
+assert.equal(root.settingsPending, true);
 assert.equal(applier.command[0], '/usr/bin/python3');
 assert.equal(applier.command[1], '-I');
 const first = JSON.parse(applier.command[3]);
@@ -65,18 +80,26 @@ assert.equal((first.lua.match(/hl.device\(/g)||[]).length,1);
 root.buttonForward = 'workspace_prev'; root.applyAllSettings(); flush();
 root.buttonForward = 'workspace_next'; root.applyAllSettings(); flush();
 assert.deepEqual(JSON.parse(applier.command[3]), first);
-finish(false);
+finish(true);
+assert.equal(root.settingsVerifiedGeneration, -1, 'Stale success cannot confirm the queued latest choice');
+assert.equal(root.settingsVerified, false);
 assert.equal(applier.running,true);
 assert.equal(JSON.parse(applier.command[3]).expected['mouse:276'],'MX Ergo: Next Workspace');
 assert.equal(root.settingsRecoveryFailed,false,'Old failure cannot overwrite newer request status');
 finish(true);
+assert.equal(root.settingsVerifiedGeneration, root.settingsGeneration, 'Only current verified helper result is a receipt');
+assert.equal(root.settingsVerified, true);
+assert.equal(root.settingsPending, false);
 assert.equal(root.settingsApplying,false);
 assert.equal(root.settingsRecoveryFailed,false);
 for (const event of [null, {}, {name:'workspace'}, {name:'activewindow'}]) context.deliver(event);
 flush(); assert.equal(applier.running,false);
 root.applyAllSettings(); flush(); finish(false);
 assert.equal(root.settingsRecoveryFailed,true,'Exhausted helper reports failure');
+assert.notEqual(root.settingsVerifiedGeneration, root.settingsGeneration, 'Failure cannot confirm the latest request');
 assert.equal(applier.running,false,'No unbounded restarts');
+root.applyAllSettings(); flush(); finish(true);
+assert.equal(root.settingsVerifiedGeneration, root.settingsGeneration, 'Explicit retry can confirm latest success');
 // Bad settings must not launch Lua or falsely clear the failure.
 root.accelProfile = 'bad"profile'; root.applyAllSettings(); flush();
 assert.equal(applier.running,false);

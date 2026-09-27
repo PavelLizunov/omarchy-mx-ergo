@@ -16,6 +16,15 @@ The illustration identifies compatible hardware; Logitech and Logi marks belong 
 
 ## Screenshots
 
-`screenshots/original/` contains the supplied UI captures. `screenshots/qml-2x/` contains 2× images rendered from `ErgoPanel.qml` with test states matching those captures. The original and rendered files are kept separately so the two sources remain easy to compare. The root `preview.png` is the light-theme buttons render used by the Marketplace and README.
+`screenshots/current/` contains the current actual `ErgoPanel.qml` consumer renders
+at native logical density (736 × 650), with inert example data, installed shell
+controls and controlled light/dark palettes. `evidence.json` identifies the
+candidate, inputs and images. These are offscreen QML captures, not live desktop
+screenshots or proof of Bluetooth state. The root `preview.png` uses the current
+light-theme Buttons render.
+
+`screenshots/original/` contains earlier supplied UI captures;
+`screenshots/qml-2x/` contains historical 2× QML rerenders matching those captures.
+They describe an older layout and are retained separately for provenance.
 
 The screenshots show Logitech and Logi product marks for hardware identification. Those marks remain the property of their respective owners; the repository license does not grant rights to third-party marks. This community plugin is not an official Logitech application.

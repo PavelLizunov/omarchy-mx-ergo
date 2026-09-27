@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -7,7 +8,29 @@ Panel {
   id: root
   moduleName: "io.github.pavellizunov.mx-ergo"
   ipcTarget: "io.github.pavellizunov.mx-ergo"
+  manageIpc: false
   onOpenedChanged: if (opened) panelCard.showPage("buttons")
+
+  IpcHandler {
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function nextProfile(): void { ergoModel.nextProfile() }
+    function nextProfileFromWheel(): void { ergoModel.nextProfileFromWheel() }
+    function profileStatus(): string {
+      return JSON.stringify({id: ergoModel.activeProfileId, name: ergoModel.activeProfileName,
+        count: ergoModel.buttonProfiles.length, buttons: ergoModel.captureButtonProfile().buttons,
+        busy: ergoModel.profileBusy, error: ergoModel.profileError,
+        configured: ergoModel.settingsConfigured, applying: ergoModel.settingsApplying,
+        applyFailed: ergoModel.settingsRecoveryFailed, loadFailed: ergoModel.configLoadFailed,
+        verified: ergoModel.settingsVerified, pending: ergoModel.settingsPending,
+        savePending: ergoModel.configPending, saveFailed: ergoModel.configSaveFailed,
+        saved: ergoModel.configStored && !ergoModel.configPending && !ergoModel.configSaveFailed && !ergoModel.configLoadFailed})
+    }
+  }
 
   readonly property bool hideWhenDisconnected: root.setting("hideWhenDisconnected", false)
   readonly property bool vertical: root.bar ? root.bar.vertical : false
@@ -46,9 +69,9 @@ Panel {
     fixedHeight: root.vertical ? Style.bar.iconSlot : -1
     horizontalMargin: 0
     verticalPadding: 0
-    tooltipText: ergoModel.connected
-      ? ("Logitech MX Ergo: " + ergoModel.batteryLevelText)
-      : ("Logitech MX Ergo: " + ergoModel.t("disconnected"))
+    tooltipText: "Logitech MX Ergo: " + ergoModel.connectionStatusText
+      + (ergoModel.connected ? " · " + ergoModel.batteryLevelText : "")
+      + " · " + ergoModel.activeProfileName
     onPressed: function(b) {
       root.toggle()
     }
@@ -116,12 +139,13 @@ Panel {
     open: root.opened
     bar: root.bar
     focusTarget: panelCard
-    contentWidth: popup.fittedContentWidth(Style.space(380))
-    contentHeight: popup.fittedContentHeight(panelCard.contentHeight)
+    contentWidth: popup.fittedContentWidth(panelCard.preferredWidth)
+    contentHeight: popup.fittedContentHeight(panelCard.contentHeight, popup.availableCardHeight * 0.95)
 
     ErgoPanel {
       id: panelCard
       anchors.fill: parent
+      panelInset: popup.contentWidth - width
       bar: root.bar
       model: ergoModel
       onCloseRequested: root.close()

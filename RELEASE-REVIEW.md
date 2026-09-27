@@ -1,5 +1,11 @@
 # Marketplace preparation review — 22 September 2026
 
+This is a historical review of its recorded candidate. Subsequent profile,
+Bluetooth, localization and layout changes are not covered by that snapshot.
+For the 27 September design candidate, see
+[design polish verification](docs/mx-ergo-design-polish-verification.md).
+Its fixture evidence is not a new production or Marketplace signoff.
+
 **Verdict: scoped source checks and independent reviews pass; runtime acceptance remains incomplete.** Local implementation checks pass and the plugin loads in the current shell. The privileged helper has a scoped independent source review. Hardware/display/keyboard lifecycle acceptance and an exact submission commit are still required. No push or Marketplace submission was performed.
 
 ## Scope and contract

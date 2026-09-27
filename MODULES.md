@@ -8,7 +8,11 @@ Start with the row matching the component to inspect or modify. Read the listed 
 | --- | --- | --- |
 | `BarWidget.qml` | Entry point for Omarchy Quattro bar. Hosts compact connection/charging icons and `KeyboardPanel` popup card. | `manifest.json`; `tests/run.sh`, `qmllint` |
 | `ErgoModel.qml` | Single state owner. Native BlueZ BLE/UPower telemetry, HID identity matching, button mappings, and Hyprland pointer controls. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
-| `ErgoPanel.qml` | Popup presentation and navigation: Buttons / Pointer / Device pages, replacement button editor, explicit shortcut/command drafts and automatic return to the diagram after an explicit choice. Uses PanelHero, 380-unit width and shared tokens. Tab navigation includes the header, language picker, errors, pages and editor, and keeps focused controls in view. | `BarWidget.qml`; `qmllint`, visual review |
+| `ErgoPanel.qml` | Popup presentation and navigation: Buttons / Pointer / Device pages, profile context above the full-width mouse diagram, adjacent button editor, explicit shortcut/command drafts and independent editor scrolling. Uses PanelHero, a 380-unit overview and shared tokens; the popup widens while editing, preserving host insets and image scale. Tab navigation includes the header, language picker, errors, pages and editor, and keeps focused controls in view. | `BarWidget.qml`; `qmllint`, visual review |
+| `ButtonProfiles.js` | Plain profile data, legacy migration, independent copies and strict keyboard shortcut parsing. | `ErgoModel.qml`; `tests/button-profiles.js` |
+| `ButtonProfilesPanel.qml` | Selector, creation, rename/delete confirmation and global shortcut draft/recorder; no direct compositor writes. | `ErgoPanel.qml`; QML lint and profile UI tests |
+| `ButtonActionPicker.qml` | Category selector and uniform action rows; browsing categories is presentation only. Emits one choice to the parent editor. | `ErgoPanel.qml`; `tests/profiles-ui/tst_editor.qml` |
+| `ErgoControl.qml` | Wrapping labels, optional detail/selection mark and consistent control geometry; input and visual states belong to the native shell Button. | Profile tools, page tabs and action rows; QML/UI checks |
 | `TrackballMap.qml` | Device-independent diagram: centered illustration, balanced callouts, five physical hotspots and selection signal. Does not write settings. Uses `assets/trackball-map.png`. | `ErgoPanel.qml`; `tests/ui/tst_trackball.qml`, visual review |
 | `I18n.js` | Internationalization dictionary and helper. Bundles 10 languages (`en`, `ru`, `de`, `fr`, `es`, `it`, `pt`, `zh`, `ja`, `ko`) with fallback. | `ErgoModel.qml`, `ErgoPanel.qml`; `tests/i18n-completeness.js` |
 | `system/omarchy-mx-ergo-bluetooth` | Optional root-owned profile helper. Fixed operations, physical adapter identity, baseline journal, atomic configuration and pending recovery. | `scripts/bluetooth-client.py`; `tests/bluetooth-profile.py` |
@@ -34,7 +38,13 @@ Start with the row matching the component to inspect or modify. Read the listed 
 - `tests/battery.js`: Production battery functions and QML identity/connection bindings, including unknown/disconnect/conflicting reports.
 - `tests/bluetooth-profile.py`: Actual controller helper in isolated sysfs/etc fixtures, including errors and partial application.
 - `tests/sleep-lifecycle.js`: Production suspend cancellation, resume gates and finite listener retries.
+- `tests/button-profiles.js`: Production migration, independent sets, verified selection/rollback, busy/stale guards, profile shortcut and wheel pulse latch.
 - `tests/config-model.js`: Serialized save queue, startup handling and failure/retry states.
 - `tests/i18n-completeness.js`: Verifies parity across all 10 locales.
 - `tests/qml-lint.py`: Isolated `qmllint` validation with copied installed shell imports; known host dynamic-type warnings are filtered; unknown members on concrete QML types fail.
 - `tests/lockscreen-guard.sh`: Verifies lockscreen detection logic against upstream bug #9441.
+
+Assignment feedback reuses ErgoModel's settings-generation receipt and the existing
+preference writer receipt. `settingsPending` / `configPending` include debounce and
+queued work; ErgoPanel renders these separately from text-field drafts. No additional
+worker, timer, persistence schema or Bluetooth operation is introduced.

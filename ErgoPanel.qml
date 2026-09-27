@@ -16,7 +16,8 @@ PanelKeyCatcher {
     Accessible.onPressAction: if (control.enabled) control.clicked()
   }
 
-  blocked: root.isRecording || (shortcutInput && shortcutInput.activeFocus) || (cmdField && cmdField.activeFocus)
+  blocked: root.isRecording || profilesSection.ownsFocus || profilesSection.popupOpen
+    || actionPicker.popupOpen || (shortcutInput && shortcutInput.activeFocus) || (cmdField && cmdField.activeFocus)
 
   required property QtObject bar
   required property QtObject model
@@ -25,11 +26,23 @@ PanelKeyCatcher {
   property bool cursorActive: false
   property string panelPage: "buttons"
   property bool editingButton: false
+  Connections {
+    target: root.model
+    function onActiveProfileIdChanged() {
+      if (root.editingButton) root.showPage("buttons")
+    }
+    function onLowLatencyBusyChanged() {
+      if (root.model.lowLatencyBusy) root.advancedExpanded = true
+    }
+    function onLowLatencyFailedChanged() {
+      if (root.model.lowLatencyFailed) root.advancedExpanded = true
+    }
+  }
   readonly property var languageCodes: ["system", "en", "zh", "es", "ru", "pt", "fr", "de", "ja", "ko", "it"]
 
   function resetViewport() {
     root.forceActiveFocus()
-    Qt.callLater(function () { viewport.contentY = 0 })
+    Qt.callLater(function () { viewport.contentY = 0; settingsViewport.contentY = 0 })
   }
 
   function showPage(page) {
@@ -37,33 +50,44 @@ PanelKeyCatcher {
     root.isRecording = false
     root.editingButton = false
     root.languageExpanded = false
+    profilesSection.reset()
     root.panelPage = page
     root.focusIndex = root.cursorActive ? -1 : (page === "buttons" ? 4 : page === "pointer" ? 0 : 5)
     resetViewport()
   }
 
   function editButton(key) {
+    if (root.model.profileBusy) return
     if (!root.buttonList.some(function (button) { return button.key === key })) return
+    profilesSection.reset()
     root.selectedButton = key
     root.isRecording = false
     root.languageExpanded = false
     root.panelPage = "buttons"
     root.editingButton = true
     syncActiveButton()
+    actionPicker.categoryIndex = actionPicker.categoryFor(root.selectedAction)
     shortcutInput.text = root.model.getCustomShortcut(key)
     cmdField.text = root.model.getCustomCommand(key)
-    resetViewport()
+    root.forceActiveFocus()
+    Qt.callLater(function () { editorViewport.contentY = 0 })
+  }
+
+  function closeButtonEdit() {
+    root.isRecording = false
+    root.editingButton = false
+    root.focusIndex = 4
+    root.forceActiveFocus()
   }
 
   function finishButtonEdit() {
-    root.showPage("buttons")
-    root.focusIndex = 4
+    root.isRecording = false
   }
 
   Keys.onEscapePressed: function (event) {
     if (root.isRecording) root.isRecording = false
     else if (root.languageExpanded) { root.languageExpanded = false; root.focusIndex = -2; root.forceActiveFocus() }
-    else if (root.editingButton) root.showPage("buttons")
+    else if (root.editingButton) root.closeButtonEdit()
     else root.closeRequested()
     event.accepted = true
   }
@@ -77,6 +101,8 @@ PanelKeyCatcher {
   property bool isRecording: false
   // Language picker expanded flag
   property bool languageExpanded: false
+  property bool advancedExpanded: false
+  readonly property bool advancedVisible: advancedExpanded
   // Function keys expanded flag
   property bool fKeysExpanded: false
 
@@ -84,7 +110,10 @@ PanelKeyCatcher {
   readonly property color dim: Qt.rgba(fgColor.r, fgColor.g, fgColor.b, 0.85)
   readonly property string fontFam: bar ? bar.fontFamily : Style.font.family
 
-  readonly property real contentHeight: contentColumn.implicitHeight + Style.space(8)
+  property real panelInset: 0
+  readonly property real preferredWidth: Style.space(736)
+  readonly property real overviewWidth: Math.max(0, Math.min(width, Style.space(380) - panelInset) - Style.spacing.controlGap)
+  readonly property real contentHeight: Style.space(650)
 
   readonly property var buttonList: [
     { key: "back", labelKey: "btn_back" },
@@ -96,6 +125,17 @@ PanelKeyCatcher {
 
   readonly property string selectedAction: root.model.getButtonAction(root.selectedButton)
   onSelectedActionChanged: syncActiveButton()
+  readonly property bool assignmentDraft: root.setupMode === "shortcut"
+    ? shortcutInput.text.trim() !== root.model.getCustomShortcut(root.selectedButton).trim()
+    : root.setupMode === "command"
+      && cmdField.text.trim() !== root.model.getCustomCommand(root.selectedButton).trim()
+  readonly property string assignmentStatusKey: root.model.configLoadFailed ? "settings_load_error"
+    : root.model.settingsPending ? "assignment_applying"
+    : root.model.configPending ? "assignment_saving"
+    : root.model.settingsRecoveryFailed ? "assignment_apply_error"
+    : root.model.configSaveFailed ? "settings_save_error"
+    : root.model.settingsVerified && root.model.configStored ? "assignment_done"
+    : "assignment_unverified"
 
   function selectedButtonLabel() {
     for (var i = 0; i < buttonList.length; ++i)
@@ -107,36 +147,43 @@ PanelKeyCatcher {
   function ensureCursorVisible() {
     if (!cursorActive || editingButton) return
     if (focusIndex === -2 || focusIndex === -1) { viewport.contentY = 0; return }
-    var target = focusIndex >= 10 ? languageGrid : focusIndex === -3 ? connectButton : focusIndex === -4 ? retrySettingsButton : focusIndex <= 1 ? profileRow : focusIndex === 2 ? sensitivityColumn
-      : focusIndex === 3 ? naturalRow : focusIndex === 5 ? autoReconnectRow : focusIndex === 6 ? latencyRow : (btnSelectorRow.selectedControl || btnSelectorRow)
-    var y = target.mapToItem(viewport.contentItem, 0, 0).y
-    var next = y < viewport.contentY ? y : Math.max(viewport.contentY, y + target.height - viewport.height)
-    viewport.contentY = Math.max(0, Math.min(viewport.contentHeight - viewport.height, next))
+    var target = focusIndex >= 10 ? languageGrid : focusIndex === 7 ? profilesSection : focusIndex === -3 ? connectButton : focusIndex === -4 ? retrySettingsButton : focusIndex <= 1 ? profileRow : focusIndex === 2 ? sensitivityColumn
+      : focusIndex === 3 ? naturalRow : focusIndex === 5 ? autoReconnectRow : focusIndex === 6 ? advancedButton : focusIndex === 8 ? profileAction : (btnSelectorRow.selectedControl || btnSelectorRow)
+    // Shared context/status is on the left; page controls scroll on the right.
+    var area = focusIndex >= 10 || focusIndex === 7 || focusIndex === 4 || focusIndex === -4
+      ? viewport : settingsViewport
+    if (focusIndex === -3) return // Recovery is in the fixed header.
+    var y = target.mapToItem(area.contentItem, 0, 0).y
+    var next = y < area.contentY ? y : Math.max(area.contentY, y + target.height - area.height)
+    area.contentY = Math.max(0, Math.min(area.contentHeight - area.height, next))
   }
 
   function stepFocus(dir) {
     cursorActive = true
     if (editingButton) {
       var controls = []
-      collectEditorControls(contentColumn, controls)
+      collectEditorControls(editorColumn, controls)
       if (controls.length === 0) return
       var current = controls.findIndex(function (control) { return control.activeFocus })
       var index = current < 0 ? (dir > 0 ? 0 : controls.length - 1)
         : (current + dir + controls.length) % controls.length
       var target = controls[index]
       target.forceActiveFocus()
-      var y = target.mapToItem(viewport.contentItem, 0, 0).y
-      viewport.contentY = Math.max(0, Math.min(viewport.contentHeight - viewport.height,
-        y < viewport.contentY ? y : Math.max(viewport.contentY, y + target.height - viewport.height)))
+      var y = target.mapToItem(editorViewport.contentItem, 0, 0).y
+      editorViewport.contentY = Math.max(0, Math.min(editorViewport.contentHeight - editorViewport.height,
+        y < editorViewport.contentY ? y : Math.max(editorViewport.contentY, y + target.height - editorViewport.height)))
       return
     }
     root.forceActiveFocus()
     var order = [-2]
     if (languageExpanded) for (var code = 0; code < languageCodes.length; code++) order.push(10 + code)
-    if (!root.model.connected && !root.model.isConnecting && root.model.canReconnect) order.push(-3)
+    if (connectButton.visible && connectButton.enabled) order.push(-3)
     if (retrySettingsButton.visible && retrySettingsButton.enabled) order.push(-4)
-    order = order.concat(panelPage === "buttons" ? [-1, 4] : panelPage === "pointer" ? [-1, 0, 1, 2, 3] : [-1, 5])
-    if (panelPage === "device" && profileAction.enabled) order.push(6)
+    order = order.concat([-1, 7, 4], panelPage === "pointer" ? [0, 1, 2, 3] : panelPage === "device" ? [5] : [])
+    if (panelPage === "device") {
+      order.push(6)
+      if (root.advancedVisible && profileAction.enabled) order.push(8)
+    }
     var index = order.indexOf(focusIndex)
     focusIndex = order[(index + dir + order.length) % order.length]
   }
@@ -192,6 +239,7 @@ PanelKeyCatcher {
 
   Component.onCompleted: {
     syncActiveButton()
+    if (root.model.lowLatencyBusy || root.model.lowLatencyFailed) root.advancedExpanded = true
   }
 
   function handleMove(dx, dy) {
@@ -209,7 +257,8 @@ PanelKeyCatcher {
       else if (dy !== 0) focusIndex = panelPage === "buttons" ? 4 : panelPage === "pointer" ? 0 : 5
       return
     }
-    if (panelPage === "buttons") {
+    if (focusIndex === 7) { profilesSection.focusFirst(); return }
+    if (focusIndex === 4) {
       var direction = dx || dy
       if (direction !== 0) {
         var index = buttonList.findIndex(function (button) { return button.key === selectedButton })
@@ -261,16 +310,22 @@ PanelKeyCatcher {
       root.focusIndex = -2
       return
     }
-    if (focusIndex === -3) { root.model.reconnectDevice(); return }
+    if (focusIndex === -3) {
+      if (root.model.recoveryStage !== "") root.model.cancelRecovery()
+      else root.model.recoverDevice()
+      return
+    }
     if (focusIndex === -4) {
       if (retrySettingsButton.visible && retrySettingsButton.enabled) root.model.retrySettings()
       return
     }
     if (focusIndex < 0) return
-    if (panelPage === "buttons") { editButton(selectedButton); return }
+    if (focusIndex === 7) { profilesSection.focusFirst(); return }
+    if (focusIndex === 4) { if (!root.model.profileBusy) editButton(selectedButton); return }
     if (panelPage === "device") {
       if (focusIndex === 5) root.model.setAutoReconnect(!root.model.autoReconnect)
-      else if (focusIndex === 6) root.activateBluetoothProfile()
+      else if (focusIndex === 6) root.advancedExpanded = !root.advancedExpanded
+      else if (focusIndex === 8) root.activateBluetoothProfile()
       return
     }
     if (focusIndex === 0) {
@@ -288,44 +343,47 @@ PanelKeyCatcher {
   onMoveRequested: function(dx, dy) { root.handleMove(dx, dy) }
   onActivateRequested: root.handleActivate()
 
-  Flickable {
-    id: viewport
-    anchors.fill: parent
-    anchors.rightMargin: Style.spacing.controlGap
-    contentWidth: width
-    contentHeight: root.contentHeight
-    clip: true
-    boundsBehavior: Flickable.StopAtBounds
-    flickableDirection: Flickable.VerticalFlick
-    Controls.ScrollBar.vertical: Controls.ScrollBar {
-      id: scrollBar
-      parent: root
-      anchors.top: parent.top
-      anchors.bottom: parent.bottom
-      anchors.right: parent.right
-      width: Style.space(3)
-      policy: Controls.ScrollBar.AsNeeded
-      contentItem: Rectangle {
-        implicitWidth: Style.space(3)
-        radius: width / 2
-        color: root.dim
-        opacity: scrollBar.active || scrollBar.hovered ? 0.6 : 0.2
-      }
+  readonly property bool editorPopupOpen: actionPicker.popupOpen || profilesSection.popupOpen || root.languageExpanded
+  property bool backgroundPopupGuard: false
+  onEditorPopupOpenChanged: {
+    if (root.editorPopupOpen) root.backgroundPopupGuard = true
+    else Qt.callLater(function() { root.backgroundPopupGuard = root.editorPopupOpen })
+  }
+
+  component EditorDismissArea: MouseArea {
+    enabled: root.editingButton
+    acceptedButtons: Qt.LeftButton
+    property point pressPosition
+    property bool moved: false
+    property bool dismissOnRelease: false
+    // Popup closure can forward the same press. Capture its guard before releasing.
+    onPressed: function(mouse) {
+      pressPosition = Qt.point(mouse.x, mouse.y)
+      moved = false
+      dismissOnRelease = !root.backgroundPopupGuard
     }
+    onPositionChanged: function(mouse) {
+      if (pressed && Math.max(Math.abs(mouse.x - pressPosition.x), Math.abs(mouse.y - pressPosition.y)) > drag.threshold)
+        moved = true
+    }
+    onClicked: if (!moved && dismissOnRelease) root.closeButtonEdit()
+  }
+
+  // Below content: unused background dismisses only the editor, without intercepting controls.
+  EditorDismissArea {
+    objectName: "assignmentBackgroundDismiss"
+    anchors.fill: parent
+    z: -1
   }
 
   Column {
-    id: contentColumn
-    parent: viewport.contentItem
-    anchors.left: parent.left
-    anchors.right: parent.right
-    anchors.top: parent.top
-    spacing: Style.spacing.panelGap
-
+    id: headerColumn
+    width: root.overviewWidth
+    spacing: Style.spacing.controlGap
     PanelHero {
       width: parent.width
       title: root.model.t("plugin_name")
-      meta: root.model.connected ? root.model.transportText : root.model.t("disconnected")
+      meta: root.model.connectionStatusText
       foreground: root.fgColor
       fontFamily: root.fontFam
       iconOpacity: root.model.connected ? 1 : 0.45
@@ -369,6 +427,119 @@ PanelKeyCatcher {
         }
       }
     }
+
+    Row {
+      id: pageTabs
+      objectName: "panelNavigation"
+      width: parent.width
+      spacing: Style.spacing.controlGap
+      ErgoControl {
+        width: (pageTabs.width - pageTabs.spacing * 2) / 3
+        objectName: "page_buttons"
+        caption: root.model.t("page_buttons")
+        fontSize: Style.font.bodySmall
+        fontFamily: root.fontFam
+        foreground: root.fgColor
+        bordered: false
+        selected: root.panelPage === "buttons"
+        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
+        Rectangle {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          height: Style.normalBorderWidth * (parent.selected ? 2 : 1)
+          color: root.fgColor
+          opacity: parent.selected ? 1 : 0.2
+        }
+        onClicked: root.showPage("buttons")
+      }
+      ErgoControl {
+        width: (pageTabs.width - pageTabs.spacing * 2) / 3
+        objectName: "page_pointer"
+        caption: root.model.t("page_pointer")
+        fontSize: Style.font.bodySmall
+        fontFamily: root.fontFam
+        foreground: root.fgColor
+        bordered: false
+        selected: root.panelPage === "pointer"
+        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
+        Rectangle {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          height: Style.normalBorderWidth * (parent.selected ? 2 : 1)
+          color: root.fgColor
+          opacity: parent.selected ? 1 : 0.2
+        }
+        onClicked: root.showPage("pointer")
+      }
+      ErgoControl {
+        width: (pageTabs.width - pageTabs.spacing * 2) / 3
+        objectName: "page_device"
+        caption: root.model.t("page_device")
+        fontSize: Style.font.bodySmall
+        fontFamily: root.fontFam
+        foreground: root.fgColor
+        bordered: false
+        selected: root.panelPage === "device"
+        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
+        Rectangle {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          height: Style.normalBorderWidth * (parent.selected ? 2 : 1)
+          color: root.fgColor
+          opacity: parent.selected ? 1 : 0.2
+        }
+        onClicked: root.showPage("device")
+      }
+    }
+  }
+
+  Flickable {
+    id: viewport
+    objectName: "overviewViewport"
+    anchors.left: parent.left
+    anchors.top: headerColumn.bottom
+    anchors.topMargin: Style.spacing.controlGap
+    anchors.bottom: parent.bottom
+    width: root.overviewWidth
+    contentWidth: width
+    contentHeight: contentColumn.implicitHeight + Style.space(8)
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    flickableDirection: Flickable.VerticalFlick
+    Controls.ScrollBar.vertical: Controls.ScrollBar {
+      id: scrollBar
+      parent: viewport
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.right: parent.right
+      width: Style.space(3)
+      policy: Controls.ScrollBar.AsNeeded
+      contentItem: Rectangle {
+        implicitWidth: Style.space(3)
+        radius: width / 2
+        color: root.dim
+        opacity: scrollBar.active || scrollBar.hovered ? 0.6 : 0.2
+      }
+    }
+  }
+
+  EditorDismissArea {
+    parent: viewport.contentItem
+    width: viewport.width
+    height: Math.max(viewport.height, viewport.contentHeight)
+    z: -1
+  }
+
+  Column {
+    id: contentColumn
+    parent: viewport.contentItem
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    spacing: Style.spacing.controlGap
 
     // Expandable Language Picker Section
     Column {
@@ -431,13 +602,14 @@ PanelKeyCatcher {
 
     Column {
       width: parent.width
-      visible: root.model.configLoadFailed || root.model.configSaveFailed || root.model.settingsRecoveryFailed || root.model.sleepMonitorFailed
+      visible: root.model.configLoadFailed || root.model.sleepMonitorFailed || root.model.profileRetryId !== ""
+        || (!root.editingButton && (root.model.configSaveFailed || root.model.settingsRecoveryFailed))
       spacing: Style.spacing.labelGap
       Repeater {
         model: [
           {show: root.model.configLoadFailed, key: "settings_load_error"},
-          {show: root.model.configSaveFailed, key: "settings_save_error"},
-          {show: root.model.settingsRecoveryFailed, key: "settings_apply_error"},
+          {show: !root.editingButton && root.model.configSaveFailed, key: "settings_save_error"},
+          {show: !root.editingButton && root.model.settingsRecoveryFailed, key: "settings_apply_error"},
           {show: root.model.sleepMonitorFailed, key: "resume_monitor_error"}
         ]
         Text {
@@ -456,8 +628,8 @@ PanelKeyCatcher {
       }
       ActionButton {
         id: retrySettingsButton
-        visible: root.model.configSaveFailed || root.model.settingsRecoveryFailed
-        enabled: !root.model.settingsApplying && !root.model.configWriting
+        visible: root.model.profileRetryId !== "" || (!root.editingButton && (root.model.configSaveFailed || root.model.settingsRecoveryFailed))
+        enabled: !root.model.settingsApplying && !root.model.configWriting && !root.model.profileBusy
         focusable: true
         hasCursor: root.cursorActive && root.focusIndex === -4
         text: root.model.t("settings_retry")
@@ -468,465 +640,705 @@ PanelKeyCatcher {
       }
     }
 
-    // Connect Trackball Button (visible when disconnected)
-    ActionButton {
-      id: connectButton
-      enabled: root.model.canReconnect && !root.model.isConnecting
-      hasCursor: root.cursorActive && root.focusIndex === -3
-      Accessible.name: root.model.t("connect_device")
-      visible: !root.model.connected && !root.editingButton
-      width: parent.width
-      text: root.model.isConnecting ? root.model.t("connecting") : ("󰂯 " + root.model.t("connect_device"))
-      fontSize: Style.font.bodySmall
-      foreground: root.fgColor
-      fontFamily: root.fontFam
-      bordered: true
-      onClicked: root.model.reconnectDevice()
-    }
-
-    // ---------- Battery report ----------
-    Column {
-      visible: !root.editingButton
-      width: parent.width
-      spacing: Style.spacing.labelGap
-
-      Item {
-        width: parent.width
-        height: batLabel.implicitHeight
-        implicitHeight: height
-
-        Text {
-          id: batLabel
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.model.batteryIcon + "  " + root.model.t("battery")
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        Text {
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.model.connected
-            ? root.model.batteryLevelText
-            : root.model.t("disconnected")
-          color: root.model.connected ? root.fgColor : root.dim
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-          font.bold: true
-        }
-      }
-
-    Text {
-      width: parent.width
-      visible: root.model.connected
-      text: root.model.batteryReportText
-      textFormat: Text.PlainText
-      wrapMode: Text.WordWrap
-      color: root.dim
-      font.family: root.fontFam
-      font.pixelSize: Style.font.caption
-    }
-    }
-
-    Row {
-      id: pageTabs
-      visible: !root.editingButton
-      width: parent.width
-      spacing: Style.spacing.controlGap
-      ActionButton {
-        width: (pageTabs.width - pageTabs.spacing * 2) / 3
-        text: root.model.t("page_buttons")
-        fontSize: Style.font.bodySmall
-        fontFamily: root.fontFam
-        foreground: root.fgColor
-        bordered: true
-        selected: root.panelPage === "buttons"
-        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
-        onClicked: root.showPage("buttons")
-      }
-      ActionButton {
-        width: (pageTabs.width - pageTabs.spacing * 2) / 3
-        text: root.model.t("page_pointer")
-        fontSize: Style.font.bodySmall
-        fontFamily: root.fontFam
-        foreground: root.fgColor
-        bordered: true
-        selected: root.panelPage === "pointer"
-        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
-        onClicked: root.showPage("pointer")
-      }
-      ActionButton {
-        width: (pageTabs.width - pageTabs.spacing * 2) / 3
-        text: root.model.t("page_device")
-        fontSize: Style.font.bodySmall
-        fontFamily: root.fontFam
-        foreground: root.fgColor
-        bordered: true
-        selected: root.panelPage === "device"
-        hasCursor: root.cursorActive && root.focusIndex === -1 && selected
-        onClicked: root.showPage("device")
-      }
-    }
-
-    ActionButton {
-      id: editorBackButton
-      visible: root.editingButton
-      text: "← " + root.model.t("back_to_buttons")
-      fontSize: Style.font.bodySmall
-      fontFamily: root.fontFam
-      foreground: root.fgColor
-      focusable: true
-      onClicked: root.showPage("buttons")
-    }
 
     Column {
-      visible: root.panelPage === "pointer" && !root.editingButton
       width: parent.width
       spacing: Style.spacing.controlGap
-      // ---------- Pointer & Hyprland Controls ----------
-      PanelSectionHeader {
-        text: root.model.t("pointer_settings")
+      // The profile sets the context for all five physical assignments.
+      ButtonProfilesPanel {
+        id: profilesSection
+        objectName: "buttonProfiles"
+        width: parent.width
+        model: root.model
         foreground: root.fgColor
         fontFamily: root.fontFam
+        hasCursor: root.cursorActive && root.focusIndex === 7
+        toolsParent: profileToolsHost
+        onEditRequested: {
+          root.editingButton = false
+          root.isRecording = false
+          root.languageExpanded = false
+          root.panelPage = "buttons"
+          Qt.callLater(function() { profileViewport.contentY = 0 })
+        }
+        onControlFocused: function(control) {
+          Qt.callLater(function() {
+            var area = control.mapToItem(profileViewport.contentItem, 0, 0)
+            if (area.x >= 0) profileViewport.contentY = Math.max(0,
+              Math.min(profileViewport.contentHeight - profileViewport.height,
+                area.y < profileViewport.contentY ? area.y : Math.max(profileViewport.contentY,
+                  area.y + control.height - profileViewport.height)))
+          })
+        }
+        onLeaveRequested: function(direction) {
+          root.forceActiveFocus()
+          root.focusIndex = 7
+          if (direction) root.stepFocus(direction)
+        }
       }
 
-      // Acceleration Profile (Adaptive vs Flat)
-      Row {
-        id: profileRow
+      Rectangle {
         width: parent.width
-        spacing: Style.spacing.controlGap
-
-        readonly property real btnWidth: (width - spacing) / 2
-
-        ActionButton {
-          width: profileRow.btnWidth
-          text: root.model.t("accel_adaptive")
-          fontSize: Style.font.bodySmall
-          foreground: root.fgColor
-          fontFamily: root.fontFam
-          bordered: true
-          selected: root.model.accelProfile === "adaptive"
-          active: root.model.accelProfile === "adaptive"
-          hasCursor: root.cursorActive && root.focusIndex === 0
-          onClicked: {
-            root.focusIndex = 0
-            root.model.setAccelProfile("adaptive")
-          }
-        }
-
-        ActionButton {
-          width: profileRow.btnWidth
-          text: root.model.t("accel_flat")
-          fontSize: Style.font.bodySmall
-          foreground: root.fgColor
-          fontFamily: root.fontFam
-          bordered: true
-          selected: root.model.accelProfile === "flat"
-          active: root.model.accelProfile === "flat"
-          hasCursor: root.cursorActive && root.focusIndex === 1
-          onClicked: {
-            root.focusIndex = 1
-            root.model.setAccelProfile("flat")
-          }
-        }
+        height: Style.normalBorderWidth
+        color: root.fgColor
+        opacity: 0.2
       }
-
-      // Sensitivity Slider
-      Column {
-        id: sensitivityColumn
-        width: parent.width
-        spacing: Style.space(3)
-
-        Item {
-          width: parent.width
-          height: sensLabel.implicitHeight
-          implicitHeight: height
-
-          Text {
-            id: sensLabel
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: root.model.t("sensitivity") + (root.cursorActive && root.focusIndex === 2 ? " [◄ ►]" : "")
-            color: root.cursorActive && root.focusIndex === 2 ? root.fgColor : root.dim
-            font.family: root.fontFam
-            font.pixelSize: Style.font.bodySmall
-            font.bold: root.cursorActive && root.focusIndex === 2
-          }
-
-          Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: (root.model.sensitivity > 0 ? "+" : "") + root.model.sensitivity.toFixed(2)
-            color: root.fgColor
-            font.family: root.fontFam
-            font.pixelSize: Style.font.bodySmall
-            font.bold: true
-          }
-        }
-
-        PanelSlider {
-          Accessible.role: Accessible.Slider
-          Accessible.name: root.model.t("sensitivity")
-          Accessible.description: root.model.sensitivity.toFixed(2)
-          Accessible.onIncreaseAction: root.model.setSensitivity(root.model.sensitivity + 0.05)
-          Accessible.onDecreaseAction: root.model.setSensitivity(root.model.sensitivity - 0.05)
-          width: parent.width
-          bar: root.bar
-          minimum: -1.0
-          maximum: 1.0
-          step: 0.05
-          value: root.model.sensitivity
-          onMoved: function(val) {
-            root.focusIndex = 2
-            root.model.setSensitivity(val)
-          }
-          onReleased: function(val) {
-            root.focusIndex = 2
-            root.model.setSensitivity(val)
-          }
-        }
-      }
-
-      // Natural Scrolling Toggle Row
-      Item {
-        id: naturalRow
-        Accessible.role: Accessible.CheckBox
-        Accessible.name: root.model.t("natural_scroll")
-        Accessible.checkable: true
-        Accessible.checked: root.model.naturalScroll
-        Accessible.onPressAction: root.model.setNaturalScroll(!root.model.naturalScroll)
-        width: parent.width
-        height: Math.max(Style.spacing.controlHeight, naturalLabel.implicitHeight + Style.space(12))
-        implicitHeight: height
-
-        Text {
-          id: naturalLabel
-          anchors.right: naturalSwitch.left
-          anchors.rightMargin: Style.spacing.controlGap
-          wrapMode: Text.Wrap
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.model.t("natural_scroll")
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        ToggleSwitch {
-          id: naturalSwitch
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          checked: root.model.naturalScroll
-          interactive: false
-          hasCursor: root.cursorActive && root.focusIndex === 3
-          foreground: root.fgColor
-          onToggled: root.model.setNaturalScroll(!root.model.naturalScroll)
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            root.focusIndex = 3
-            root.model.setNaturalScroll(!root.model.naturalScroll)
-          }
-        }
-      }
-
-    }
-
-    Column {
-      visible: root.panelPage === "device" && !root.editingButton
-      width: parent.width
-      spacing: Style.spacing.controlGap
-      // Auto-reconnect on Wake Toggle Row
-      Item {
-        id: autoReconnectRow
-        Accessible.role: Accessible.CheckBox
-        Accessible.name: root.model.t("auto_reconnect")
-        Accessible.checkable: true
-        Accessible.checked: root.model.autoReconnect
-        Accessible.onPressAction: root.model.setAutoReconnect(!root.model.autoReconnect)
-        width: parent.width
-        height: Math.max(Style.spacing.controlHeight, autoRecLabel.implicitHeight + Style.space(12))
-        implicitHeight: height
-
-        Text {
-          id: autoRecLabel
-          anchors.right: autoRecSwitch.left
-          anchors.rightMargin: Style.spacing.controlGap
-          wrapMode: Text.Wrap
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: root.model.t("auto_reconnect")
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        ToggleSwitch {
-          id: autoRecSwitch
-          hasCursor: root.cursorActive && root.focusIndex === 5
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          checked: root.model.autoReconnect
-          interactive: false
-          foreground: root.fgColor
-          onToggled: root.model.setAutoReconnect(!root.model.autoReconnect)
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            root.model.setAutoReconnect(!root.model.autoReconnect)
-          }
-        }
-      }
-
-      // Controller-wide administrative action, separate from ordinary device controls.
-      Column {
-        id: latencyRow
-        width: parent.width
-        spacing: Style.spacing.controlGap
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          text: root.model.t("polling_rate")
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-        }
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          text: root.model.t("low_latency_hint")
-          color: root.dim
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-        }
-        Text {
-          width: parent.width
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          text: root.model.lowLatencyBusy ? root.model.t("latency_busy") : root.model.t("latency_" + root.model.lowLatencyState)
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-        }
-        Text {
-          visible: root.model.lowLatencyFailed
-          width: parent.width
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          text: root.model.t("latency_error")
-          color: root.fgColor
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-        }
-        Text {
-          visible: !root.model.lowLatencyHelperAvailable
-          width: parent.width
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          text: root.model.t("latency_setup")
-          color: root.dim
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-        }
-        ActionButton {
-          id: profileAction
-          width: parent.width
-          readonly property string actionLabel: root.model.t(root.model.lowLatencyLegacy ? "latency_cleanup" : root.model.lowLatencyCanRestore ? "latency_restore" : "latency_enable")
-          implicitHeight: Math.max(Style.spacing.controlHeight, profileActionLabel.implicitHeight + verticalPadding * 2 + Style.normalBorderWidth * 2)
-          Accessible.name: actionLabel
-          enabled: root.model.lowLatencyHelperAvailable && !root.model.lowLatencyBusy
-            && root.model.lowLatencyState !== "restart"
-            && (root.model.lowLatencyCanRestore || root.model.lowLatencyLegacy || root.model.bluetoothAdapter !== "")
-          hasCursor: root.cursorActive && root.focusIndex === 6
-          foreground: root.fgColor
-          fontFamily: root.fontFam
-          fontSize: Style.font.bodySmall
-          bordered: true
-          onClicked: root.activateBluetoothProfile()
-          Text {
-            id: profileActionLabel
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.margins: profileAction.horizontalPadding + Style.normalBorderWidth
-            anchors.verticalCenter: parent.verticalCenter
-            text: profileAction.actionLabel
-            textFormat: Text.PlainText
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            font.family: root.fontFam
-            font.pixelSize: Style.font.bodySmall
-            color: root.fgColor
-          }
-        }
-      }
-
-    }
-
-    Column {
-      visible: root.panelPage === "buttons"
-      width: parent.width
-      spacing: Style.spacing.controlGap
-      // The diagram and editor occupy the same space, never stack vertically.
 
       TrackballMap {
         id: btnSelectorRow
-        visible: !root.editingButton
+        enabled: !root.model.profileBusy
         width: parent.width
         height: implicitHeight
         foreground: root.fgColor
         background: Color.popups.background
         accent: root.bar && root.bar.accent !== undefined ? root.bar.accent : Color.accent
         fontFamily: root.fontFam
-        labelSize: Style.font.bodySmall
-        actionSize: Style.font.caption
+        labelSize: Style.font.body
+        actionSize: Style.font.bodySmall
         gap: Style.spacing.labelGap
         padding: Style.space(6)
         borderWidth: Style.normalBorderWidth
         cornerRadius: Style.cornerRadius
         selectedButton: root.selectedButton
-        hasCursor: root.cursorActive && root.focusIndex === 4
+        hasCursor: root.editingButton || (root.cursorActive && root.focusIndex === 4)
         buttons: root.buttonList.map(function (button) {
           return { key: button.key, label: root.model.t(button.key === "back" ? "button_back_short" : button.key === "forward" ? "button_forward_short" : button.labelKey),
-            action: root.model.actionLabel(root.model.getButtonAction(button.key), button.key) }
+            action: root.model.actionLabel(root.model.getButtonAction(button.key), button.key),
+            compact: root.model.getButtonAction(button.key) === "custom_shortcut" || root.model.getButtonAction(button.key) === "custom_command" }
         })
         onSelectionRequested: function (buttonKey) {
-          root.editButton(buttonKey)
+          if (root.backgroundPopupGuard) return
+          if (root.editingButton && root.selectedButton === buttonKey) root.closeButtonEdit()
+          else root.editButton(buttonKey)
         }
       }
 
-      // Active Button Card
-      Rectangle {
-        visible: root.editingButton
+    }
+
+    // Bottom breathing margin
+    Item {
+      width: parent.width
+      height: Style.space(4)
+      implicitHeight: height
+    }
+  }
+
+  Rectangle {
+    x: root.overviewWidth + Style.spacing.controlGap
+    y: pageTabs.y
+    width: Style.normalBorderWidth
+    height: Math.max(0, root.height - y)
+    color: root.fgColor
+    opacity: 0.2
+  }
+
+  // Explicit recovery remains available when BlueZ reports a stale connection.
+  ErgoControl {
+    id: connectButton
+    objectName: "deviceRecovery"
+    enabled: !root.model.recoveryStopping
+      && (root.model.recoveryStage !== "" || (root.model.canStartRecovery && !root.model.isConnecting))
+    hasCursor: root.cursorActive && root.focusIndex === -3
+    Accessible.name: root.model.recoveryStage !== "" ? root.model.t("cancel_recovery")
+      : (root.model.btDevice && root.model.btDevice.connected
+          ? root.model.t("recover_connected_action") : root.model.t("connect_device"))
+    visible: (root.model.canRecover || root.model.recoveryBusy)
+      && (root.panelPage === "device" || root.model.recoveryBusy)
+    x: editorViewport.x
+    y: 0
+    width: editorViewport.width - Style.spacing.controlGap
+    caption: root.model.recoveryStopping ? root.model.t("recovery_stopping")
+      : root.model.recoveryStage !== "" ? root.model.t("cancel_recovery")
+      : ("󰂯 " + (root.model.btDevice && root.model.btDevice.connected
+          ? root.model.t("recover_connected_action") : root.model.t("connect_device")))
+    fontSize: Style.font.bodySmall
+    foreground: root.fgColor
+    fontFamily: root.fontFam
+    bordered: true
+    onClicked: {
+      if (root.model.recoveryStage !== "") root.model.cancelRecovery()
+      else root.model.recoverDevice()
+    }
+  }
+
+
+  Flickable {
+    id: settingsViewport
+    objectName: "settingsViewport"
+    visible: root.panelPage !== "buttons"
+    x: editorViewport.x
+    y: editorViewport.y
+    width: editorViewport.width
+    height: editorViewport.height
+    contentWidth: width
+    contentHeight: settingsColumn.implicitHeight + Style.space(8)
+    boundsBehavior: Flickable.StopAtBounds
+    flickableDirection: Flickable.VerticalFlick
+    clip: true
+    Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
+    Column {
+      id: settingsColumn
+      width: Math.max(0, settingsViewport.width - Style.spacing.controlGap)
+      spacing: Style.spacing.controlGap
+      Text {
+        visible: !root.editingButton && root.model.recoveryResult !== "" && root.panelPage === "device"
         width: parent.width
-        radius: Style.space(6)
-        color: Qt.rgba(root.fgColor.r, root.fgColor.g, root.fgColor.b, 0.05)
-        border.width: 1
-        border.color: Qt.rgba(root.fgColor.r, root.fgColor.g, root.fgColor.b, 0.12)
-        height: activeCardCol.implicitHeight + Style.space(16)
+        text: root.model.t(root.model.recoveryResult)
+          + (root.model.recoveryScanNote ? "\n" + root.model.recoveryScanNote : "")
+          + (root.model.recoveryOtherNote ? "\n" + root.model.recoveryOtherNote : "")
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: root.fgColor
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+        Accessible.role: Accessible.StaticText
+        Accessible.name: text
+      }
+
+      // Detailed device telemetry belongs to the Device page.
+      Column {
+        visible: root.panelPage === "device" && !root.editingButton
+        width: parent.width
+        spacing: Style.spacing.labelGap
+
+        Item {
+          width: parent.width
+          height: batLabel.implicitHeight
+          implicitHeight: height
+
+          Text {
+            id: batLabel
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.model.batteryIcon + "  " + root.model.t("battery")
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.model.connected
+              ? root.model.batteryLevelText
+              : root.model.t("disconnected")
+            color: root.model.connected ? root.fgColor : root.dim
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+        }
+
+      Text {
+        width: parent.width
+        visible: root.model.connected
+        text: root.model.batteryReportText
+        textFormat: Text.PlainText
+        wrapMode: Text.WordWrap
+        color: root.dim
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        width: parent.width
+        visible: root.model.batterySourceDifference !== ""
+        text: root.model.batterySourceDifference
+        textFormat: Text.PlainText
+        wrapMode: Text.WordWrap
+        color: root.dim
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+      }
+      }
+
+
+
+
+      Column {
+        visible: root.panelPage === "pointer" && !root.editingButton
+        width: parent.width
+        spacing: Style.spacing.controlGap
+        // ---------- Pointer & Hyprland Controls ----------
+        PanelSectionHeader {
+          text: root.model.t("pointer_settings")
+          foreground: root.fgColor
+          fontFamily: root.fontFam
+        }
+
+        Text {
+          objectName: "pointerScope"
+          width: parent.width
+          text: root.model.t("pointer_scope")
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          color: root.dim
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+        }
+
+        // Acceleration Profile (Adaptive vs Flat)
+        Row {
+          id: profileRow
+          width: parent.width
+          spacing: Style.spacing.controlGap
+
+          readonly property real btnWidth: (width - spacing) / 2
+
+          ErgoControl {
+            width: profileRow.btnWidth
+            objectName: "accelAdaptive"
+            caption: root.model.t("accel_adaptive")
+            fontSize: Style.font.bodySmall
+            foreground: root.fgColor
+            fontFamily: root.fontFam
+            bordered: true
+            selected: root.model.accelProfile === "adaptive"
+            active: root.model.accelProfile === "adaptive"
+            hasCursor: root.cursorActive && root.focusIndex === 0
+            onClicked: {
+              root.focusIndex = 0
+              root.model.setAccelProfile("adaptive")
+            }
+          }
+
+          ErgoControl {
+            width: profileRow.btnWidth
+            objectName: "accelFlat"
+            caption: root.model.t("accel_flat")
+            fontSize: Style.font.bodySmall
+            foreground: root.fgColor
+            fontFamily: root.fontFam
+            bordered: true
+            selected: root.model.accelProfile === "flat"
+            active: root.model.accelProfile === "flat"
+            hasCursor: root.cursorActive && root.focusIndex === 1
+            onClicked: {
+              root.focusIndex = 1
+              root.model.setAccelProfile("flat")
+            }
+          }
+        }
+
+        // Sensitivity Slider
+        Column {
+          id: sensitivityColumn
+          width: parent.width
+          spacing: Style.space(3)
+
+          Item {
+            width: parent.width
+            height: sensLabel.implicitHeight
+            implicitHeight: height
+
+            Text {
+              id: sensLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: root.model.t("sensitivity") + (root.cursorActive && root.focusIndex === 2 ? " [◄ ►]" : "")
+              color: root.cursorActive && root.focusIndex === 2 ? root.fgColor : root.dim
+              font.family: root.fontFam
+              font.pixelSize: Style.font.bodySmall
+              font.bold: root.cursorActive && root.focusIndex === 2
+            }
+
+            Text {
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: (root.model.sensitivity > 0 ? "+" : "") + root.model.sensitivity.toFixed(2)
+              color: root.fgColor
+              font.family: root.fontFam
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+          }
+
+          PanelSlider {
+            Accessible.role: Accessible.Slider
+            Accessible.name: root.model.t("sensitivity")
+            Accessible.description: root.model.sensitivity.toFixed(2)
+            Accessible.onIncreaseAction: root.model.setSensitivity(root.model.sensitivity + 0.05)
+            Accessible.onDecreaseAction: root.model.setSensitivity(root.model.sensitivity - 0.05)
+            width: parent.width
+            bar: root.bar
+            minimum: -1.0
+            maximum: 1.0
+            step: 0.05
+            value: root.model.sensitivity
+            onMoved: function(val) {
+              root.focusIndex = 2
+              root.model.setSensitivity(val)
+            }
+            onReleased: function(val) {
+              root.focusIndex = 2
+              root.model.setSensitivity(val)
+            }
+          }
+        }
+
+        // Natural Scrolling Toggle Row
+        Item {
+          id: naturalRow
+          objectName: "naturalScrollRow"
+          Accessible.role: Accessible.CheckBox
+          Accessible.name: root.model.t("natural_scroll")
+          Accessible.checkable: true
+          Accessible.checked: root.model.naturalScroll
+          Accessible.onPressAction: root.model.setNaturalScroll(!root.model.naturalScroll)
+          width: parent.width
+          height: Math.max(Style.spacing.controlHeight, naturalLabel.implicitHeight + Style.space(12))
+          implicitHeight: height
+
+          Text {
+            id: naturalLabel
+            anchors.right: naturalSwitch.left
+            anchors.rightMargin: Style.spacing.controlGap
+            wrapMode: Text.Wrap
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.model.t("natural_scroll")
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          ToggleSwitch {
+            id: naturalSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: root.model.naturalScroll
+            interactive: false
+            hasCursor: root.cursorActive && root.focusIndex === 3
+            foreground: root.fgColor
+            onToggled: root.model.setNaturalScroll(!root.model.naturalScroll)
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              root.focusIndex = 3
+              root.model.setNaturalScroll(!root.model.naturalScroll)
+            }
+          }
+        }
+
+      }
+
+      Column {
+        visible: root.panelPage === "device" && !root.editingButton
+        width: parent.width
+        spacing: Style.spacing.controlGap
+        // Auto-reconnect after startup and wake
+        Item {
+          id: autoReconnectRow
+          objectName: "autoReconnectRow"
+          Accessible.role: Accessible.CheckBox
+          Accessible.name: root.model.t("auto_reconnect")
+          Accessible.checkable: true
+          Accessible.checked: root.model.autoReconnect
+          Accessible.onPressAction: root.model.setAutoReconnect(!root.model.autoReconnect)
+          width: parent.width
+          height: Math.max(Style.spacing.controlHeight, autoRecLabel.implicitHeight + Style.space(12))
+          implicitHeight: height
+
+          Text {
+            id: autoRecLabel
+            anchors.right: autoRecSwitch.left
+            anchors.rightMargin: Style.spacing.controlGap
+            wrapMode: Text.Wrap
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.model.t("auto_reconnect")
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          ToggleSwitch {
+            id: autoRecSwitch
+            hasCursor: root.cursorActive && root.focusIndex === 5
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: root.model.autoReconnect
+            interactive: false
+            foreground: root.fgColor
+            onToggled: root.model.setAutoReconnect(!root.model.autoReconnect)
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              root.model.setAutoReconnect(!root.model.autoReconnect)
+            }
+          }
+        }
+
+        Rectangle {
+          width: parent.width
+          height: Style.normalBorderWidth
+          color: root.fgColor
+          opacity: 0.15
+        }
+        ErgoControl {
+          id: advancedButton
+          objectName: "deviceAdvanced"
+          width: parent.width
+          caption: root.model.t("advanced_settings")
+          detail: root.advancedExpanded ? "" : root.model.lowLatencyBusy ? root.model.t("latency_busy")
+            : root.model.lowLatencyFailed ? root.model.t("latency_error") : ""
+          marker: root.advancedVisible ? "▴" : "▾"
+          leftAlign: true
+          selected: root.advancedVisible
+          hasCursor: root.cursorActive && root.focusIndex === 6
+          foreground: root.fgColor
+          fontFamily: root.fontFam
+          onClicked: { root.focusIndex = 6; root.advancedExpanded = !root.advancedExpanded }
+        }
+
+        // Controller-wide administrative action, disclosed separately from ordinary device controls.
+        Column {
+          id: latencyRow
+          objectName: "adapterSettings"
+          visible: root.advancedVisible
+          width: parent.width
+          spacing: Style.spacing.controlGap
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: root.model.t("polling_rate")
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+          }
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: root.model.t("low_latency_hint")
+            color: root.dim
+            font.family: root.fontFam
+            font.pixelSize: Style.font.caption
+          }
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: root.model.lowLatencyBusy ? root.model.t("latency_busy") : root.model.t("latency_" + root.model.lowLatencyState)
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.caption
+          }
+          Text {
+            visible: root.model.lowLatencyFailed
+            width: parent.width
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: root.model.t("latency_error")
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.caption
+          }
+          Text {
+            visible: !root.model.lowLatencyHelperAvailable
+            width: parent.width
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            text: root.model.t("latency_setup")
+            color: root.dim
+            font.family: root.fontFam
+            font.pixelSize: Style.font.caption
+          }
+          ActionButton {
+            id: profileAction
+            objectName: "adapterProfileAction"
+            width: parent.width
+            readonly property string actionLabel: root.model.t(root.model.lowLatencyLegacy ? "latency_cleanup" : root.model.lowLatencyCanRestore ? "latency_restore" : "latency_enable")
+            implicitHeight: Math.max(Style.spacing.controlHeight, profileActionLabel.implicitHeight + verticalPadding * 2 + Style.normalBorderWidth * 2)
+            Accessible.name: actionLabel
+            enabled: root.model.lowLatencyHelperAvailable && !root.model.lowLatencyBusy
+              && root.model.lowLatencyState !== "restart"
+              && (root.model.lowLatencyCanRestore || root.model.lowLatencyLegacy || root.model.bluetoothAdapter !== "")
+            hasCursor: root.cursorActive && root.focusIndex === 8
+            foreground: root.fgColor
+            fontFamily: root.fontFam
+            fontSize: Style.font.bodySmall
+            bordered: true
+            onClicked: root.activateBluetoothProfile()
+            Text {
+              id: profileActionLabel
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.margins: profileAction.horizontalPadding + Style.normalBorderWidth
+              anchors.verticalCenter: parent.verticalCenter
+              text: profileAction.actionLabel
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              horizontalAlignment: Text.AlignHCenter
+              font.family: root.fontFam
+              font.pixelSize: Style.font.bodySmall
+              color: root.fgColor
+            }
+          }
+        }
+
+      }
+
+
+    }
+  }
+
+  Column {
+    visible: root.panelPage === "buttons" && !root.editingButton && !profilesSection.toolsActive
+    x: editorViewport.x
+    y: editorViewport.y + Style.space(42)
+    width: Math.max(0, editorViewport.width - Style.spacing.controlGap)
+    spacing: Style.space(12)
+    Text {
+      objectName: "assignmentEmptyTitle"
+      width: parent.width
+      text: root.model.t("assignment_empty_title")
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      color: root.fgColor
+      font.family: root.fontFam
+      font.pixelSize: Style.font.body
+      font.bold: true
+    }
+    Text {
+      width: parent.width
+      text: root.model.t("assignment_empty_hint")
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      color: root.dim
+      font.family: root.fontFam
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
+  Flickable {
+    id: profileViewport
+    objectName: "profileToolsViewport"
+    visible: root.panelPage === "buttons" && !root.editingButton && profilesSection.toolsActive
+    x: editorViewport.x
+    y: editorViewport.y
+    width: editorViewport.width
+    height: editorViewport.height
+    contentWidth: width
+    contentHeight: profileToolsHost.implicitHeight + Style.space(8)
+    boundsBehavior: Flickable.StopAtBounds
+    flickableDirection: Flickable.VerticalFlick
+    clip: true
+    Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
+    Column {
+      id: profileToolsHost
+      width: Math.max(0, profileViewport.width - Style.spacing.controlGap)
+      spacing: Style.space(12)
+      Text {
+        width: parent.width
+        text: profilesSection.mode === "create" ? "+ " + root.model.t("profile_add")
+          : root.model.t(profilesSection.mode === "rename" ? "profile_rename"
+            : profilesSection.mode === "delete" ? "profile_delete" : "profile_manage")
+        textFormat: Text.PlainText
+        color: root.fgColor
+        font.family: root.fontFam
+        font.pixelSize: Style.font.body
+        font.bold: true
+      }
+      Text {
+        width: parent.width
+        visible: profilesSection.mode === "" || profilesSection.mode === "rename" || profilesSection.mode === "delete"
+        text: root.model.t("profile_editing").replace("%1", root.model.activeProfileName)
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: root.dim
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+      }
+    }
+  }
+
+  Flickable {
+    id: editorViewport
+    objectName: "assignmentViewport"
+    visible: root.editingButton
+    x: root.overviewWidth + Style.spacing.controlGap + Style.space(16)
+    y: Math.max(pageTabs.y, connectButton.visible ? connectButton.height + Style.spacing.controlGap : 0)
+    width: Math.max(0, root.width - x - Style.spacing.controlGap)
+    height: Math.max(0, root.height - y)
+    contentWidth: width
+    contentHeight: editorColumn.implicitHeight + Style.space(8)
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    flickableDirection: Flickable.VerticalFlick
+    Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
+
+    EditorDismissArea {
+      width: editorViewport.width
+      height: Math.max(editorViewport.height, editorViewport.contentHeight)
+      z: -2
+    }
+
+    // Protect the complete editor, including static text and gaps, from background dismissal.
+    MouseArea {
+      width: editorColumn.width
+      height: editorColumn.height
+      z: -1
+      acceptedButtons: Qt.LeftButton
+    }
+
+    Column {
+      id: editorColumn
+      width: editorViewport.width - Style.spacing.controlGap
+      spacing: Style.space(12)
+
+      Row {
+        width: parent.width
+        spacing: Style.spacing.controlGap
+        Text {
+          width: Math.max(0, parent.width - editorBackButton.width - parent.spacing)
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.model.t("profile_editing").replace("%1", root.model.activeProfileName)
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          color: root.dim
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+        }
+        ErgoControl {
+          id: editorBackButton
+          objectName: "closeAssignment"
+          width: Math.min(implicitWidth, parent.width / 2)
+          caption: root.model.t("close_editor")
+          Accessible.name: root.model.t("close_editor_tooltip")
+          tooltipText: root.model.t("close_editor_tooltip")
+          bordered: true
+          fontSize: Style.font.bodySmall
+          fontFamily: root.fontFam
+          foreground: root.fgColor
+          onClicked: root.closeButtonEdit()
+        }
+      }
+      // Selected button and action editor
+      Rectangle {
+        enabled: !root.model.profileBusy
+        width: parent.width
+        color: "transparent"
+        height: activeCardCol.implicitHeight
 
         Column {
           id: activeCardCol
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.top: parent.top
-          anchors.margins: Style.space(8)
-          spacing: Style.spacing.controlGap
+          spacing: Style.space(12)
 
           Column {
             width: parent.width
@@ -939,15 +1351,16 @@ PanelKeyCatcher {
                 anchors.verticalCenter: parent.verticalCenter
                 textFormat: Text.PlainText
                 text: root.selectedButtonLabel()
-                color: root.dim
+                color: root.fgColor
                 font.family: root.fontFam
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.body
+                font.bold: true
                 wrapMode: Text.Wrap
               }
-              ActionButton {
-                focusable: true
+              ErgoControl {
                 id: resetButton
-                text: "↺ " + root.model.t("btn_reset_default")
+                width: Math.min(implicitWidth, parent.width / 2)
+                caption: root.model.t("btn_reset_default")
                 fontSize: Style.font.caption
                 foreground: root.fgColor
                 fontFamily: root.fontFam
@@ -961,13 +1374,68 @@ PanelKeyCatcher {
             Text {
               width: parent.width
               textFormat: Text.PlainText
-              text: root.model.actionLabel(root.model.getButtonAction(root.selectedButton), root.selectedButton)
+              text: root.model.t("assignment_label")
+              color: root.dim
+              font.family: root.fontFam
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.Wrap
+            }
+            Text {
+              objectName: "assignmentValue"
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.model.actionLabel(root.selectedAction, root.selectedButton)
+              color: root.fgColor
+              font.family: root.fontFam
+              font.pixelSize: Style.font.body
+              font.bold: true
+              wrapMode: Text.Wrap
+              Accessible.role: Accessible.StaticText
+              Accessible.name: text
+            }
+            Text {
+              objectName: "assignmentStatus"
+              width: parent.width
+              textFormat: Text.PlainText
+              text: root.model.t(root.assignmentStatusKey)
+              font.bold: root.assignmentStatusKey !== "assignment_done" && root.assignmentStatusKey !== "assignment_unverified"
               color: root.fgColor
               font.family: root.fontFam
               font.pixelSize: Style.font.bodySmall
-              font.bold: true
               wrapMode: Text.Wrap
+              Accessible.role: Accessible.StaticText
+              Accessible.name: text
             }
+            ErgoControl {
+              objectName: "assignmentRetry"
+              visible: root.model.configSaveFailed || root.model.settingsRecoveryFailed || root.model.profileRetryId !== ""
+              enabled: !root.model.settingsPending && !root.model.configPending && !root.model.profileBusy
+              caption: root.model.t("settings_retry")
+              fontSize: Style.font.caption
+              foreground: root.fgColor
+              fontFamily: root.fontFam
+              bordered: true
+              onClicked: root.model.retrySettings()
+            }
+          }
+
+          Rectangle {
+            width: parent.width
+            height: Style.normalBorderWidth
+            color: root.fgColor
+            opacity: 0.15
+          }
+
+          Text {
+            objectName: "assignmentMethod"
+            width: parent.width
+            text: root.model.t("assignment_method")
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: root.fgColor
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
           }
 
           // Mode Switcher (Presets | Record Shortcut | Command)
@@ -977,155 +1445,105 @@ PanelKeyCatcher {
 
             readonly property real modeBtnWidth: (width - spacing * 2) / 3
 
-            ActionButton {
+            ErgoControl {
                 focusable: true
               width: parent.modeBtnWidth
-              text: root.model.t("tab_presets")
-              fontSize: Style.font.caption
+              caption: root.model.t("tab_presets")
+              fontSize: Style.font.bodySmall
               foreground: root.fgColor
               fontFamily: root.fontFam
-              bordered: true
+              bordered: false
               selected: root.setupMode === "presets"
               active: root.setupMode === "presets"
               onClicked: { root.setupMode = "presets"; root.isRecording = false }
             }
 
-            ActionButton {
+            ErgoControl {
                 focusable: true
               width: parent.modeBtnWidth
-              text: root.model.t("tab_shortcut")
-              fontSize: Style.font.caption
+              caption: root.model.t("tab_shortcut")
+              fontSize: Style.font.bodySmall
               foreground: root.fgColor
               fontFamily: root.fontFam
-              bordered: true
+              bordered: false
               selected: root.setupMode === "shortcut"
               active: root.setupMode === "shortcut"
               onClicked: { root.setupMode = "shortcut"; root.isRecording = false }
             }
 
-            ActionButton {
+            ErgoControl {
                 focusable: true
               width: parent.modeBtnWidth
-              text: root.model.t("tab_command")
-              fontSize: Style.font.caption
+              caption: root.model.t("tab_command")
+              fontSize: Style.font.bodySmall
               foreground: root.fgColor
               fontFamily: root.fontFam
-              bordered: true
+              bordered: false
               selected: root.setupMode === "command"
               active: root.setupMode === "command"
               onClicked: { root.setupMode = "command"; root.isRecording = false }
             }
           }
 
-          // Mode 1: Presets Catalog (Categorized pills)
-          Column {
+          Text {
+            objectName: "assignmentHint"
+            width: parent.width
+            textFormat: Text.PlainText
+            text: root.model.t(root.setupMode === "presets" ? "assignment_preset_hint"
+              : root.assignmentDraft ? "assignment_draft_hint"
+              : root.selectedAction === "custom_" + root.setupMode ? "assignment_edit_hint" : "assignment_apply_hint")
+            color: root.assignmentDraft ? root.fgColor : root.dim
+            font.bold: root.assignmentDraft
+            font.family: root.fontFam
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+          }
+
+          ButtonActionPicker {
+            id: actionPicker
             visible: root.setupMode === "presets"
             width: parent.width
-            spacing: Style.space(6)
+            model: root.model
+            foreground: root.fgColor
+            fontFamily: root.fontFam
+            selectedAction: root.selectedAction
+            onChosen: function(action) {
+              root.model.setButtonAction(root.selectedButton, action)
+              root.finishButtonEdit()
+            }
+          }
 
-            Repeater {
-              model: [
-                {
-                  title: root.model.t("category_workspaces"),
-                  items: [
-                    { id: "workspace_next", label: root.model.t("action_workspace_next") },
-                    { id: "workspace_prev", label: root.model.t("action_workspace_prev") }
-                  ]
-                },
-                {
-                  title: root.model.t("category_windows"),
-                  items: [
-                    { id: "window_close", label: root.model.t("action_window_close") },
-                    { id: "window_float", label: root.model.t("action_window_float") },
-                    { id: "window_fullscreen", label: root.model.t("action_window_fullscreen") },
-                    { id: "window_next", label: root.model.t("action_window_next") }
-                  ]
-                },
-                {
-                  title: root.model.t("category_media"),
-                  items: [
-                    { id: "media_play_pause", label: root.model.t("action_media_play_pause") },
-                    { id: "mute", label: root.model.t("action_mute") },
-                    { id: "media_next", label: root.model.t("action_media_next") },
-                    { id: "media_prev", label: root.model.t("action_media_prev") }
-                  ]
-                },
-                {
-                  title: root.model.t("category_browser"),
-                  items: [
-                    { id: "tab_next", label: root.model.t("action_tab_next") },
-                    { id: "tab_prev", label: root.model.t("action_tab_prev") },
-                    { id: "browser_back", label: root.model.t("action_browser_back") },
-                    { id: "browser_forward", label: root.model.t("action_browser_forward") }
-                  ]
-                },
-                {
-                  title: root.model.t("category_system"),
-                  items: [
-                    { id: "overview", label: root.model.t("action_overview") },
-                    { id: "screenshot", label: root.model.t("action_screenshot") },
-                    { id: "default", label: root.model.t("clear_binding") }
-                  ]
-                }
-              ]
-
-              delegate: Column {
-                required property var modelData
-                width: parent.width
-                spacing: Style.space(3)
-
-                Text {
-                  textFormat: Text.PlainText
-                  text: modelData.title
-                  color: root.dim
-                  font.family: root.fontFam
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-
-                Flow {
-                  width: parent.width
-                  spacing: Style.spacing.labelGap
-
-                  Repeater {
-                    model: modelData.items
-
-                    delegate: ActionButton {
-                focusable: true
-                      id: presetButton
-                      required property var modelData
-                      width: Math.min(implicitWidth, parent.width)
-                      implicitWidth: presetLabel.implicitWidth + horizontalPadding * 2 + Style.normalBorderWidth * 2
-                      implicitHeight: Math.max(Style.spacing.controlHeight, presetLabel.implicitHeight + verticalPadding * 2 + Style.normalBorderWidth * 2)
-                      foreground: root.fgColor
-                      fontFamily: root.fontFam
-                      fontSize: Style.font.caption
-                      selected: root.model.getButtonAction(root.selectedButton) === modelData.id
-                      bordered: true
-                      Accessible.name: modelData.label
-                      onClicked: {
-                        root.model.setButtonAction(root.selectedButton, modelData.id)
-                        root.finishButtonEdit()
-                      }
-                      Text {
-                        id: presetLabel
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.margins: presetButton.horizontalPadding + Style.normalBorderWidth
-                        anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.PlainText
-                        text: presetButton.modelData.label
-                        color: presetButton.selected ? Style.selectedStateColor(root.fgColor, presetButton.accent) : root.fgColor
-                        font.family: root.fontFam
-                        font.pixelSize: presetButton.fontSize
-                        font.bold: presetButton.selected
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.Wrap
-                      }
-                    }
-                  }
-                }
-              }
+          ActionButton {
+            id: switchAllButton
+            objectName: "profileSwitchAll"
+            visible: root.selectedAction === "profile_next"
+            width: parent.width
+            readonly property string actionLabel: root.model.t("profile_switch_all")
+            Accessible.name: actionLabel
+            implicitHeight: Math.max(Style.spacing.controlHeight,
+              switchAllLabel.implicitHeight + verticalPadding * 2 + Style.normalBorderWidth * 2)
+            fontSize: Style.font.caption
+            foreground: root.fgColor
+            fontFamily: root.fontFam
+            onClicked: {
+              root.model.setProfileSwitchForAll(root.selectedButton)
+              root.finishButtonEdit()
+            }
+            Text {
+              id: switchAllLabel
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.margins: switchAllButton.horizontalPadding + Style.normalBorderWidth
+              anchors.verticalCenter: parent.verticalCenter
+              text: switchAllButton.actionLabel
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              horizontalAlignment: Text.AlignHCenter
+              color: root.fgColor
+              font.family: root.fontFam
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -1142,11 +1560,14 @@ PanelKeyCatcher {
 
               TextField {
                 id: shortcutInput
+                objectName: "assignmentShortcut"
                 maximumLength: 256
                 font.family: root.fontFam
                 width: parent.width
                 font.pixelSize: Style.font.bodySmall
                 placeholderText: root.model.t("shortcut_input_placeholder")
+                Accessible.name: root.model.t("tab_shortcut")
+                Accessible.description: root.model.t("assignment_edit_hint")
                 text: root.model.getCustomShortcut(root.selectedButton)
                 Keys.onTabPressed: function(event) {
                   if (root.isRecording) event.accepted = false
@@ -1248,10 +1669,12 @@ PanelKeyCatcher {
               Row {
                 width: parent.width
                 spacing: Style.spacing.controlGap
-              ActionButton {
+              ErgoControl {
                 focusable: true
                 id: btnClear
-                text: root.model.t("btn_clear")
+                objectName: "assignmentClear"
+                width: (parent.width - parent.spacing) / 2
+                caption: root.model.t("clear_field")
                 fontSize: Style.font.caption
                 foreground: root.fgColor
                 fontFamily: root.fontFam
@@ -1261,10 +1684,13 @@ PanelKeyCatcher {
                 }
               }
 
-              ActionButton {
+              ErgoControl {
                 focusable: true
                 id: btnApply
-                text: root.model.t("btn_apply")
+                objectName: "assignmentShortcutApply"
+                width: (parent.width - parent.spacing) / 2
+                caption: root.model.t("btn_apply")
+                selected: true
                 fontSize: Style.font.caption
                 foreground: root.fgColor
                 fontFamily: root.fontFam
@@ -1442,11 +1868,14 @@ PanelKeyCatcher {
 
             TextField {
               id: cmdField
+              objectName: "assignmentCommand"
               maximumLength: 2048
               font.family: root.fontFam
               width: parent.width
               font.pixelSize: Style.font.bodySmall
               placeholderText: root.model.t("custom_shortcut_placeholder")
+              Accessible.name: root.model.t("tab_command")
+              Accessible.description: root.model.t("assignment_edit_hint")
               text: root.model.getCustomCommand(root.selectedButton)
               Keys.onTabPressed: root.stepFocus(1)
               Keys.onBacktabPressed: root.stepFocus(-1)
@@ -1460,9 +1889,11 @@ PanelKeyCatcher {
                 value: root.model.getCustomCommand(root.selectedButton)
               }
             }
-            ActionButton {
+            ErgoControl {
+              objectName: "assignmentCommandApply"
                 focusable: true
-              text: root.model.t("btn_apply")
+              caption: root.model.t("btn_apply")
+              selected: true
               fontSize: Style.font.bodySmall
               fontFamily: root.fontFam
               foreground: root.fgColor
@@ -1475,14 +1906,7 @@ PanelKeyCatcher {
           }
         }
       }
-
-    }
-
-    // Bottom breathing margin
-    Item {
-      width: parent.width
-      height: Style.space(4)
-      implicitHeight: height
     }
   }
+
 }

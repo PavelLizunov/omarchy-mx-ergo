@@ -4,16 +4,18 @@ const path=require('node:path');
 const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','ErgoModel.qml'),'utf8');
 const timer=()=>({stops:0,restarts:0,stop(){this.stops++},restart(){this.restarts++}});
-const root={sleeping:false,shuttingDown:false,autoReconnect:true,settingsConfigured:true,sleepMonitorRestarts:0,applies:0,applyAllSettings(){this.applies++}};
+const root={sleeping:false,shuttingDown:false,autoReconnect:true,settingsConfigured:true,sleepMonitorRestarts:0,applies:0,recoveryStage:'',wakeRetryDevice:null,recoveryResults:[],finishRecovery(result){this.recoveryResults.push(result);this.recoveryStage='';},applyAllSettings(){this.applies++}};
 const signals=[];
-const c={root,wakeReconnectTimer:timer(),wakeStage2Timer:timer(),sleepRetry:timer(),sleepMonitor:{running:false},sleepStartCheck:timer(),settingsApplier:{running:true,signal:n=>signals.push(n)}};
+const c={root,wakeReconnectTimer:timer(),wakeStage2Timer:timer(),wakeRetryDeadline:timer(),startupRecoveryTimer:timer(),sleepRetry:timer(),sleepMonitor:{running:false},sleepStartCheck:timer(),settingsApplier:{running:true,signal:n=>signals.push(n)}};
 vm.createContext(c);
 for(const name of ['prepareForSleep','scheduleSleepMonitorRetry']) {
  vm.runInContext(source.match(new RegExp('^  function '+name+'\\([^]*?^  \\}','m'))[0],c);root[name]=c[name];
 }
 root.prepareForSleep(true);
 assert.equal(root.sleeping,true);assert.deepEqual(signals,[15]);
-assert.equal(c.wakeReconnectTimer.stops,1);assert.equal(c.wakeStage2Timer.stops,1);
+assert.equal(c.wakeReconnectTimer.stops,1);assert.equal(c.wakeStage2Timer.stops,1);assert.equal(c.wakeRetryDeadline.stops,1);
+root.recoveryStage='scanning'; root.prepareForSleep(true);
+assert.deepEqual(root.recoveryResults,['recovery_cancelled'],'Sleep cancels an active recovery');
 root.prepareForSleep(false);
 assert.equal(root.sleeping,false);assert.equal(root.applies,1);assert.equal(c.wakeReconnectTimer.restarts,1);
 root.autoReconnect=false;root.prepareForSleep(false);assert.equal(c.wakeReconnectTimer.restarts,1);
