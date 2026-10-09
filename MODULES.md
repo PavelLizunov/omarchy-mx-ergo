@@ -8,7 +8,7 @@ Start with the row matching the component to inspect or modify. Read the listed 
 | --- | --- | --- |
 | `BarWidget.qml` | Entry point for Omarchy Quattro bar. Hosts compact connection/charging icons and `KeyboardPanel` popup card. | `manifest.json`; `tests/run.sh`, `qmllint` |
 | `ErgoModel.qml` | Single state owner. Native BlueZ BLE/UPower telemetry, HID identity matching, button mappings, and Hyprland pointer controls. | `BarWidget.qml`, `ErgoPanel.qml`; `tests/model-contract.js` |
-| `ErgoPanel.qml` | Popup presentation and navigation: Buttons / Pointer / Device pages, profile context above the full-width mouse diagram, adjacent button editor, explicit shortcut/command drafts and independent editor scrolling. Uses PanelHero, a 380-unit overview and shared tokens; the popup widens while editing, preserving host insets and image scale. Tab navigation includes the header, language picker, errors, pages and editor, and keeps focused controls in view. | `BarWidget.qml`; `qmllint`, visual review |
+| `ErgoPanel.qml` | Popup presentation and navigation: Buttons / Pointer / Device pages, profile context above the full-width mouse diagram, adjacent button editor, explicit shortcut/command drafts and independent editor scrolling. Uses PanelHero, a 380-unit overview and shared tokens inside a fixed 736 by 650 scaled frame; editing and page changes preserve the frame, host insets and image scale. Tab navigation includes the header, language picker, errors, pages and editor, and keeps focused controls in view. | `BarWidget.qml`; `qmllint`, visual review |
 | `ButtonProfiles.js` | Plain profile data, legacy migration, independent copies and strict keyboard shortcut parsing. | `ErgoModel.qml`; `tests/button-profiles.js` |
 | `ButtonProfilesPanel.qml` | Selector, creation, rename/delete confirmation and global shortcut draft/recorder; no direct compositor writes. | `ErgoPanel.qml`; QML lint and profile UI tests |
 | `ButtonActionPicker.qml` | Category selector and uniform action rows; browsing categories is presentation only. Emits one choice to the parent editor. | `ErgoPanel.qml`; `tests/profiles-ui/tst_editor.qml` |
@@ -42,7 +42,8 @@ Start with the row matching the component to inspect or modify. Read the listed 
 - `tests/config-model.js`: Serialized save queue, startup handling and failure/retry states.
 - `tests/i18n-completeness.js`: Verifies parity across all 10 locales.
 - `tests/qml-lint.py`: Isolated `qmllint` validation with copied installed shell imports; known host dynamic-type warnings are filtered; unknown members on concrete QML types fail.
-- `tests/lockscreen-guard.sh`: Verifies lockscreen detection logic against upstream bug #9441.
+- `tests/lockscreen-guard.sh`: Exercises a copied lock predicate for unlocked, locked and session-locked states. It does not test pending/unknown states or the actual host restart consumer.
+- `tests/repository-docs.py`: Pins the active instruction set, local documentation links, current panel facts and test-runner coverage without changing runtime acceptance expectations.
 
 Assignment feedback reuses ErgoModel's settings-generation receipt and the existing
 preference writer receipt. `settingsPending` / `configPending` include debounce and

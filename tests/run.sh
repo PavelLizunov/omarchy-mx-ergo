@@ -4,6 +4,9 @@ set -euo pipefail
 
 plugin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+echo "=== 0. Checking repository documentation contracts ==="
+python3 -B "$plugin_dir/tests/repository-docs.py"
+
 echo "=== 1. Validating manifest.json syntax ==="
 python3 -m json.tool "$plugin_dir/manifest.json" >/dev/null
 

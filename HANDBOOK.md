@@ -11,7 +11,7 @@
 
 ## 2. Battery telemetry
 
-`Quickshell.Services.UPower` and `Quickshell.Bluetooth` own battery state. `PowerDevice.qml` reads HID identity metadata through a native `FileView`, then `ErgoModel.qml` selects exactly one matching battery. `Battery.js` interprets recognized UPower icons and BlueZ values as approximate categories. UPower’s numeric percentage is not used: it can be a compatibility approximation for a coarse battery level.
+`Quickshell.Services.UPower` and `Quickshell.Bluetooth` own battery state. `PowerDevice.qml` reads HID identity metadata through a native `FileView`, then `ErgoModel.qml` selects exactly one matching battery. `Battery.js` interprets the matched kernel `capacity_level` and BlueZ values as approximate categories. UPower's icon can indicate charging; it is not decoded as a charge category. UPower’s numeric percentage is not used: it can be a compatibility approximation for a coarse battery level.
 
 The installed Quickshell API has no `BatteryLevel`, serial, or hardware measurement timestamp. Metadata read time is not battery measurement time. High does not mean a verified 100%. No battery gauge is rendered. The main label shows the reported category, charging, or unknown when no category is available. A secondary hint explains that the level is approximate and an exact percentage is unavailable. The Bluetooth connection flag takes precedence over cached BLE battery presence.
 
@@ -49,7 +49,7 @@ o.bind("mouse:278", "MX Ergo: Prev Workspace", hl.dsp.focus({ workspace = "e-1" 
 
 ## 4. Interface contract
 
-The panel uses the host's `PanelHero`, `KeyboardPanel`, shared `Style` sizes and colors. Its width follows the ROG Cetra reference (`Style.space(380)`). Buttons, Pointer and Device are separate pages; the button editor replaces the diagram. Confirming an assignment returns to the diagram. Draft edits have no effect until explicitly applied.
+The panel uses the host's `PanelHero`, `KeyboardPanel`, shared `Style` sizes and colors. Buttons, Pointer and Device share a fixed `Style.space(736)` by `Style.space(650)` frame, fitted by the host. The mouse and profile context remain on the left; the adjacent editor and Pointer/Device settings occupy the independently scrolling right column. Applying an assignment keeps the editor open. Closing it or changing pages discards unapplied drafts; draft edits have no effect until explicitly applied.
 
 The small SVG trackball icon and the larger generated illustration are separate assets. The illustration's five targets are defined in `TrackballMap.qml`. Theme changes tint the small icon and all QML controls; they do not recolor the product illustration.
 
@@ -59,9 +59,9 @@ Keyboard handling is exercised by production-function and offscreen diagram test
 
 `config-store.py` caps preference reads at 64 KiB, rejects invalid values and special files, and uses an atomic same-directory replacement with mode 0600. One managed writer serializes saves and retains only the latest queued value. Read/write errors appear in the panel and logs; the previous file is preserved on write failure. Retry serializes through the same writer. Startup guards also expose a helper that fails to launch. Closing the shell during the 500ms save debounce can still discard a just-made edit.
 
-`apply-settings.py` reads at most 1 MiB of child output and kills/reaps a child on overflow, timeout or cancellation. Each invocation has a five-second deadline. The model adds a 40-second overall watchdog and at most one pending request. Successful readback verifies binding keys, global scope and descriptions, not the eventual effect of an external command.
+`apply-settings.py` reads at most 1 MiB of child output and kills/reaps a child on overflow, timeout or cancellation. Each invocation has a five-second deadline. The model adds a 60-second overall watchdog and at most one pending request. Successful readback verifies binding keys, global scope and descriptions, not the eventual effect of an external command.
 
-Bluetooth resume recovery makes at most two attempts, at approximately 2 and 12 seconds after resume. Reconnect uses only a known native BlueZ device. An eight-second busy guard prevents overlapping attempts. The logind listener has at most three restart attempts spaced by two seconds. Its failure is visible; successful startup clears the warning without resetting the retry budget. Sleep stops reconnect timers and cancels the current settings helper. Resume restarts configured settings application.
+Bluetooth resume recovery makes at most two attempts. The first is scheduled two seconds after resume; the second has a ten-second delay after that first attempt and waits for its native Connect operation to settle. The retry opportunity expires after 60 seconds. Reconnect uses only a known native BlueZ device. An eight-second busy guard prevents overlapping attempts. The logind listener has at most three restart attempts spaced by two seconds. Its failure is visible; successful startup clears the warning without resetting the retry budget. Resume resets the listener budget. Sleep stops reconnect timers and cancels the current settings helper. Resume restarts configured settings application.
 
 ## Named button profiles
 

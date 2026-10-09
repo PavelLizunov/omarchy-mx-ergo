@@ -2,12 +2,16 @@
 
 The plugin remains a development candidate (manifest `1.0.0`). Marketplace preparation is local; no submission approval is implied.
 
-## Implemented and covered by local checks
+## Implemented with local checks
+
+The 2026-10-08 original working-tree baseline passed the Python, JavaScript,
+manifest and QML lint checks, but failed the offscreen profile-form Backtab focus
+assertion at `tests/profiles-ui/tst_editor.qml:942`. This is not an all-green gate.
 
 - Reactive BlueZ/UPower telemetry with HID identity matching and explicit unknown/disconnected states.
 - Approximate battery categories; no fabricated percentages or full-battery gauge.
-- Five-button diagram, replacement editor, explicit draft commits and return after selection.
-- Three-page panel using the ROG Cetra width and host theme/typography.
+- Five-button diagram, adjacent editor, explicit draft commits and in-place assignment updates.
+- Three-page panel using a fixed 736 by 650 scaled frame and host theme/typography.
 - Automatic language preference, ten native language names and explicit script-aware fallback.
 - Keyboard traversal of header/languages/editor, accessible button/checkbox/slider metadata, visible failure and Retry states.
 - Bounded logind-listener restart, suspend cancellation and native-only reconnect.
@@ -19,8 +23,12 @@ The plugin remains a development candidate (manifest `1.0.0`). Marketplace prepa
 
 ## Before Marketplace submission
 
-- [x] Independent read-only review of the privileged helper/client/installer/policy (GPT-5.5, explicit routing exception); fixture-isolation finding fixed and rechecked.
-- [x] Independent static review of the final QML/model/helper candidate through Gemini; no actionable findings, runtime limits retained.
+Earlier independent helper and QML reviews are historical evidence in
+[the dated release review](RELEASE-REVIEW.md), not acceptance of today's dirty
+working tree. Re-establish them on the actual release candidate.
+
+- [ ] Diagnose and resolve the original profile-form Backtab focus failure without weakening the assertion.
+- [ ] Re-establish current-candidate independent static review and a green complete test gate.
 - [ ] Native end-to-end keyboard/accessibility review across pages and language picker.
 - [ ] Multi-monitor, vertical bar, display hotplug and additional scale checks.
 - [ ] Live optional-profile enable/restore and udev reapply on an authorized test adapter. Installation alone does not establish those results.
