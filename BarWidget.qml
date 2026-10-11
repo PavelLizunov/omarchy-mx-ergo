@@ -11,6 +11,27 @@ Panel {
   manageIpc: false
   onOpenedChanged: if (opened) panelCard.showPage("buttons")
 
+  // Loader settings can lag an inline edit after a plugin reload. The scoped
+  // host facade carries the current persisted entry, without rebuilding widgets.
+  function resolveSettings(config, fallback) {
+    var layout = config && config.layout
+    var matches = []
+    if (layout) ["left", "center", "right"].forEach(function(section) {
+      var entries = layout[section]
+      if (!Array.isArray(entries)) return
+      entries.forEach(function(entry) {
+        if (entry && entry.id === root.moduleName) matches.push(entry)
+      })
+    })
+    return matches.length === 1 ? matches[0] : fallback
+  }
+  readonly property var currentSettings: resolveSettings(
+    root.bar && root.bar.shell ? root.bar.shell.barConfig : null, root.settings)
+  function currentSetting(name, fallback) {
+    var value = currentSettings ? currentSettings[name] : undefined
+    return value === undefined || value === null ? fallback : value
+  }
+
   IpcHandler {
     target: root.ipcTarget
     function open(): void { root.open() }
@@ -18,6 +39,16 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
+    function connectionStatus(): string {
+      return JSON.stringify({target: ergoModel.targetAddress,
+        address: ergoModel.btDevice ? ergoModel.btDevice.address : "",
+        connected: ergoModel.connected, transport: ergoModel.transport,
+        canRecover: ergoModel.canRecover, canStartRecovery: ergoModel.canStartRecovery,
+        busy: ergoModel.recoveryBusy, stage: ergoModel.recoveryStage,
+        result: ergoModel.recoveryResult, panelOpen: root.opened,
+        page: panelCard.panelPage, recoveryVisible: panelCard.recoveryVisible})
+    }
+    function recoverConnection(): bool { return ergoModel.recoverDevice() }
     function nextProfile(): void { ergoModel.nextProfile() }
     function nextProfileFromWheel(): void { ergoModel.nextProfileFromWheel() }
     function profileStatus(): string {
@@ -32,21 +63,21 @@ Panel {
     }
   }
 
-  readonly property bool hideWhenDisconnected: root.setting("hideWhenDisconnected", false)
+  readonly property bool hideWhenDisconnected: root.currentSetting("hideWhenDisconnected", false)
   readonly property bool vertical: root.bar ? root.bar.vertical : false
 
   ErgoModel {
     id: ergoModel
-    targetAddress: root.setting("deviceAddress", "")
-    hyprDeviceName: root.setting("hyprDeviceName", "logitech-mx-ergo-multi-device-trackball-")
-    sensitivity: root.setting("sensitivity", 0.0)
-    accelProfile: root.setting("accelProfile", "adaptive")
-    naturalScroll: root.setting("naturalScroll", false)
-    language: root.setting("locale", "system")
+    targetAddress: root.currentSetting("deviceAddress", "")
+    hyprDeviceName: root.currentSetting("hyprDeviceName", "logitech-mx-ergo-multi-device-trackball-")
+    sensitivity: root.currentSetting("sensitivity", 0.0)
+    accelProfile: root.currentSetting("accelProfile", "adaptive")
+    naturalScroll: root.currentSetting("naturalScroll", false)
+    language: root.currentSetting("locale", "system")
     panelOpen: root.opened
     onLocaleRequested: function(code) {
       if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function") {
-        var entry = Object.assign({}, root.settings || {}, {
+        var entry = Object.assign({}, root.currentSettings || {}, {
           id: root.moduleName,
           locale: code
         })

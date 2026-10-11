@@ -26,6 +26,7 @@ PanelKeyCatcher {
   property bool cursorActive: false
   property string panelPage: "buttons"
   property bool editingButton: false
+  readonly property bool recoveryVisible: connectButton.visible
   Connections {
     target: root.model
     function onActiveProfileIdChanged() {
@@ -742,8 +743,7 @@ PanelKeyCatcher {
     Accessible.name: root.model.recoveryStage !== "" ? root.model.t("cancel_recovery")
       : (root.model.btDevice && root.model.btDevice.connected
           ? root.model.t("recover_connected_action") : root.model.t("connect_device"))
-    visible: (root.model.canRecover || root.model.recoveryBusy)
-      && (root.panelPage === "device" || root.model.recoveryBusy)
+    visible: root.model.canRecover || root.model.recoveryBusy
     x: editorViewport.x
     y: 0
     width: editorViewport.width - Style.spacing.controlGap
@@ -751,6 +751,8 @@ PanelKeyCatcher {
       : root.model.recoveryStage !== "" ? root.model.t("cancel_recovery")
       : ("󰂯 " + (root.model.btDevice && root.model.btDevice.connected
           ? root.model.t("recover_connected_action") : root.model.t("connect_device")))
+    detail: root.model.recoveryStage === "" && !root.model.recoveryStopping
+      && root.model.recoveryResult !== "" ? root.model.t(root.model.recoveryResult) : ""
     fontSize: Style.font.bodySmall
     foreground: root.fgColor
     fontFamily: root.fontFam

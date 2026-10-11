@@ -65,7 +65,9 @@ TestCase {
     property string recoveryOtherNote: ""
     property string recoveryScanNote: ""
     property int cancellations: 0
+    property int recoveries: 0
     function cancelRecovery() { cancellations++ }
+    function recoverDevice() { recoveries++; return true }
     property bool lowLatencyBusy: false
     property bool lowLatencyCanRestore: false
     property bool lowLatencyFailed: false
@@ -145,8 +147,12 @@ TestCase {
     model.effectiveLanguage = "ru"
     model.language = "ru"
     model.canRecover = false
+    model.canStartRecovery = false
+    model.isConnecting = false
+    model.recoveries = 0
     model.recoveryBusy = false
     model.recoveryStage = ""
+    model.recoveryResult = ""
     model.cancellations = 0
     model.batteryReportText = ""
     model.batterySourceDifference = ""
@@ -235,7 +241,7 @@ TestCase {
       "profile controls precede the full mouse illustration")
     verify(editor.contentHeight <= 650, "normal overview fits the current logical screen without shrinking the mouse")
     verify(!findChild(editor, "profileShortcut").visible)
-    verify(!findChild(editor, "deviceRecovery").visible, "idle Bluetooth tools belong to Device")
+    verify(findChild(editor, "deviceRecovery").visible, "recovery is available without visiting Device")
     ;["back", "forward", "middle", "tiltLeft", "tiltRight"].forEach(function(key) {
       verify(findChild(editor, "callout_" + key).visible, "physical control remains reachable: " + key)
     })
@@ -809,6 +815,36 @@ TestCase {
   }
   function test_all_pages_short_locales_data() {
     return ["en", "ru", "de", "fr", "es", "it", "pt", "zh", "ja", "ko"].map(function(locale) { return {tag:locale, locale:locale} })
+  }
+
+  function test_recovery_action_on_every_page() {
+    model.canRecover = true
+    model.canStartRecovery = true
+    var recovery = findChild(editor, "deviceRecovery")
+    ;["buttons", "pointer", "device"].forEach(function(page, index) {
+      editor.showPage(page)
+      wait(20)
+      verify(recovery.visible && recovery.enabled, page + ": recovery is immediately available")
+      var content = findChild(editor, page === "buttons" ? "assignmentViewport" : "settingsViewport")
+      verify(recovery.y + recovery.height <= content.y, "recovery does not cover page content")
+      mouseClick(recovery, recovery.width / 2, recovery.height / 2)
+      compare(model.recoveries, index + 1)
+    })
+    editor.editButton("back")
+    editor.setupMode = "command"
+    findChild(editor, "assignmentCommand").text = "unapplied recovery draft"
+    wait(20)
+    mouseClick(recovery, recovery.width / 2, recovery.height / 2)
+    compare(model.recoveries, 4)
+    verify(editor.editingButton)
+    compare(findChild(editor, "assignmentCommand").text, "unapplied recovery draft")
+    model.recoveryResult = "recovery_connect_failed"
+    compare(recovery.detail, model.t("recovery_connect_failed"), "failure is visible on the initial page")
+    wait(20)
+    var viewport = findChild(editor, "assignmentViewport")
+    verify(recovery.y + recovery.height <= viewport.y, "failure feedback cannot cover the editor")
+    model.isConnecting = true
+    verify(!recovery.enabled, "a pending Connect cannot be duplicated")
   }
 
   function test_recovery_cancel_remains_reachable() {
