@@ -61,7 +61,7 @@ Column {
   ]
 
   function categoryFor(action) {
-    for (var i = 0; i < categories.length; ++i)
+    for (let i = 0; i < categories.length; ++i)
       if (categories[i].items.some(function(item) { return item.id === action })) return i
     return 4
   }

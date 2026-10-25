@@ -70,8 +70,8 @@ def check(root):
         errors.append('HANDBOOK/source: recheck in-place assignment contract')
     if 'settingsDeadline.interval = 60000' not in model or '60-second overall watchdog' not in handbook:
         errors.append('HANDBOOK/source: recheck settings watchdog contract')
-    if 'failed' not in backlog or 'Backtab' not in backlog:
-        errors.append('BACKLOG.md: known original baseline failure must stay visible')
+    if 'failed' not in backlog or 'Backtab' not in backlog or 'unchanged' not in backlog:
+        errors.append('BACKLOG.md: original Backtab failure and unchanged-assertion recheck must stay visible')
     development = (root / 'DEVELOPMENT.md').read_text()
     if 'pre-existing failure blocks a full product PASS, not independent verified hygiene' not in development:
         errors.append('DEVELOPMENT.md: distinguish original failures from independent change gates')

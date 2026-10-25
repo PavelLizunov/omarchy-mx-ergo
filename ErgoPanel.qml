@@ -139,7 +139,7 @@ PanelKeyCatcher {
     : "assignment_unverified"
 
   function selectedButtonLabel() {
-    for (var i = 0; i < buttonList.length; ++i)
+    for (let i = 0; i < buttonList.length; ++i)
       if (buttonList[i].key === selectedButton) return root.model.t(buttonList[i].labelKey)
     return ""
   }
@@ -162,22 +162,22 @@ PanelKeyCatcher {
   function stepFocus(dir) {
     cursorActive = true
     if (editingButton) {
-      var controls = []
+      let controls = []
       collectEditorControls(editorColumn, controls)
       if (controls.length === 0) return
-      var current = controls.findIndex(function (control) { return control.activeFocus })
-      var index = current < 0 ? (dir > 0 ? 0 : controls.length - 1)
+      let current = controls.findIndex(function (control) { return control.activeFocus })
+      let index = current < 0 ? (dir > 0 ? 0 : controls.length - 1)
         : (current + dir + controls.length) % controls.length
-      var target = controls[index]
+      let target = controls[index]
       target.forceActiveFocus()
-      var y = target.mapToItem(editorViewport.contentItem, 0, 0).y
+      let y = target.mapToItem(editorViewport.contentItem, 0, 0).y
       editorViewport.contentY = Math.max(0, Math.min(editorViewport.contentHeight - editorViewport.height,
         y < editorViewport.contentY ? y : Math.max(editorViewport.contentY, y + target.height - editorViewport.height)))
       return
     }
     root.forceActiveFocus()
     var order = [-2]
-    if (languageExpanded) for (var code = 0; code < languageCodes.length; code++) order.push(10 + code)
+    if (languageExpanded) for (let code = 0; code < languageCodes.length; code++) order.push(10 + code)
     if (connectButton.visible && connectButton.enabled) order.push(-3)
     if (retrySettingsButton.visible && retrySettingsButton.enabled) order.push(-4)
     order = order.concat([-1, 7, 4], panelPage === "pointer" ? [0, 1, 2, 3] : panelPage === "device" ? [5] : [])
@@ -192,7 +192,7 @@ PanelKeyCatcher {
   function collectEditorControls(item, controls) {
     if (!item.visible || !item.enabled) return
     if (item.activeFocusOnTab) { controls.push(item); return }
-    for (var i = 0; i < item.children.length; ++i) collectEditorControls(item.children[i], controls)
+    for (let i = 0; i < item.children.length; ++i) collectEditorControls(item.children[i], controls)
   }
 
   function syncActiveButton() {
@@ -216,8 +216,8 @@ PanelKeyCatcher {
       nextText = cur + " " + token
     } else {
       if (isMod) {
-        var parts = cur.split(/\s*\+\s*/)
-        var idx = parts.indexOf(token)
+        let parts = cur.split(/\s*\+\s*/)
+        let idx = parts.indexOf(token)
         if (idx !== -1) {
           parts.splice(idx, 1)
           nextText = parts.join(" + ")
@@ -252,7 +252,7 @@ PanelKeyCatcher {
     }
     if (focusIndex === -1) {
       if (dx !== 0) {
-        var pages = ["buttons", "pointer", "device"]
+        let pages = ["buttons", "pointer", "device"]
         showPage(pages[(pages.indexOf(panelPage) + (dx > 0 ? 1 : -1) + pages.length) % pages.length])
       }
       else if (dy !== 0) focusIndex = panelPage === "buttons" ? 4 : panelPage === "pointer" ? 0 : 5
@@ -260,9 +260,9 @@ PanelKeyCatcher {
     }
     if (focusIndex === 7) { profilesSection.focusFirst(); return }
     if (focusIndex === 4) {
-      var direction = dx || dy
+      let direction = dx || dy
       if (direction !== 0) {
-        var index = buttonList.findIndex(function (button) { return button.key === selectedButton })
+        let index = buttonList.findIndex(function (button) { return button.key === selectedButton })
         selectedButton = buttonList[(index + (direction > 0 ? 1 : -1) + buttonList.length) % buttonList.length].key
       }
       return
@@ -1660,7 +1660,7 @@ PanelKeyCatcher {
                   }
 
                   if (keyName !== "") {
-                    var full = (mods.length > 0 ? (mods.join(" + ") + " + ") : "") + keyName
+                    let full = (mods.length > 0 ? (mods.join(" + ") + " + ") : "") + keyName
                     shortcutInput.text = full
                     root.isRecording = false
                     event.accepted = true

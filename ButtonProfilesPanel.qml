@@ -1,12 +1,13 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Profile management stays separate from the five-button editor.
 Column {
   id: root
   required property QtObject model
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property bool hasCursor: false
   property string mode: ""
@@ -34,14 +35,14 @@ Column {
   function focusWithin(item) {
     if (!item.visible) return false
     if (item.activeFocus) return true
-    for (var i = 0; i < item.children.length; i++) if (root.focusWithin(item.children[i])) return true
+    for (let i = 0; i < item.children.length; i++) if (root.focusWithin(item.children[i])) return true
     return false
   }
 
   function collectControls(item, result) {
     if (!item.visible || !item.enabled) return
     if (item.activeFocusOnTab) { result.push(item); return }
-    for (var i = 0; i < item.children.length; i++) root.collectControls(item.children[i], result)
+    for (let i = 0; i < item.children.length; i++) root.collectControls(item.children[i], result)
   }
 
   function focusFirst() {
@@ -98,7 +99,7 @@ Column {
     else if (event.key >= Qt.Key_A && event.key <= Qt.Key_Z) key = String.fromCharCode(event.key)
     else if (event.key >= Qt.Key_F1 && event.key <= Qt.Key_F24) key = "F" + (event.key - Qt.Key_F1 + 1)
     else {
-      var names = {}
+      let names = {}
       names[Qt.Key_Space] = "Space"; names[Qt.Key_Return] = "Return"; names[Qt.Key_Enter] = "Return"
       names[Qt.Key_Tab] = "Tab"; names[Qt.Key_Backtab] = "Tab"; names[Qt.Key_Backspace] = "BackSpace"
       names[Qt.Key_Insert] = "Insert"; names[Qt.Key_Delete] = "Delete"; names[Qt.Key_Home] = "Home"
@@ -290,7 +291,7 @@ Column {
         if (!root.recording) return
         if (event.key === Qt.Key_Escape) root.recording = false
         else {
-          var key = root.recordKey(event)
+          let key = root.recordKey(event)
           if (key) { text = key; root.recording = false }
         }
         event.accepted = true

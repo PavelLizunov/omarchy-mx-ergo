@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import qs.Ui as Ui
 import qs.Commons
+import qs.Commons as Commons
 import "../.." as Plugin
 import "../../ButtonProfiles.js" as Profiles
 import "../../I18n.js" as I18n
@@ -59,7 +60,7 @@ TestCase {
     blocked: panel.ownsFocus || panel.popupOpen
     Rectangle {
       anchors.fill: parent
-      color: Color.popups.background
+      color: Commons.Color.popups.background
     }
     Plugin.ButtonProfilesPanel {
       id: panel

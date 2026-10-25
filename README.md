@@ -3,9 +3,10 @@
 Battery categories, button profiles and pointer settings for the Logitech MX Ergo
 trackball over Bluetooth or a Logitech Unifying receiver.
 
-> **Development snapshot, not a stable release.** The manifest version is not a
-> readiness claim. The original offscreen profile-form keyboard-focus test fails;
-> see [current status and acceptance work](BACKLOG.md).
+> **1.1.0-rc.1 — preview release, not a stable hardware signoff.** The complete
+> local suite passes on Omarchy 4.5.0rc1 and Qt 6.12.0, including 103 offscreen
+> profile/editor checks. See [release evidence](docs/release-1.1.0-rc.1.md) and
+> [remaining acceptance work](BACKLOG.md).
 
 Read [installation and removal](#installation-and-removal) before enabling it.
 Requires Linux with Omarchy Quattro and the Hyprland Lua interface used here.
@@ -72,8 +73,9 @@ implicitly. Hardware DPI is not controlled. The optional latency profile has no
 measured input-rate or latency benefit. Older versions cannot load the new
 profile format; retain a preferences backup before downgrading.
 
-The original profile-form Backtab assertion remains open. Text overlapping the
-plugin was previously reported with no confirmed cause. Native keyboard-only
+The original profile-form Backtab assertion passes on the current Qt host; the
+assertion was not weakened. Text overlapping the plugin was previously reported
+with no confirmed cause. Native keyboard-only
 accessibility, hardware recovery and broader display/scale compatibility still
 need acceptance. See [BACKLOG.md](BACKLOG.md) for the current status.
 

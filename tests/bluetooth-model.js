@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'ErgoModel.qml'), 'utf
 const check = {running: false};
 const apply = {running: false};
 const root = {lowLatencyHelperAvailable: false, lowLatencyBusy: false, lowLatencyFailed: true, bluetoothAdapter: 'hci0', lowLatencyScript: '/plugin/scripts/low-latency.sh'};
-const context = vm.createContext({root, lowLatencyCheck: check, lowLatencyApply: apply, Qt: {callLater: fn => fn()}});
+const context = vm.createContext({root, lowLatencyCheck: check, latencyStatusProcess: check, lowLatencyApply: apply, Qt: {callLater: fn => fn()}});
 for (const name of ['checkLowLatency', 'runLowLatency']) {
   const fn = source.match(new RegExp('^  function ' + name + '\\([^]*?^  \\}', 'm'));
   assert.ok(fn);

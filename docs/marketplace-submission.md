@@ -1,35 +1,47 @@
-# Marketplace submission draft
+# Marketplace submission draft — 1.1.0-rc.1
 
-Local draft only. Read `RELEASE-REVIEW.md` and finish its acceptance items before sending.
+The owner requested verification and publication on 25 October 2026. This file
+records listing material; it does not mean Marketplace approval was granted.
+The exact candidate is the commit referenced by GitHub tag `v1.1.0-rc.1`.
 
 - Repository: https://github.com/PavelLizunov/omarchy-mx-ergo
 - Name: Logitech MX Ergo
 - Plugin ID: `io.github.pavellizunov.mx-ergo`
-- Manifest version: `1.0.0` — development candidate
-- Commit: **not frozen; do not submit the old repository HEAD**
-- Kind: bar-widget
+- Manifest version: `1.1.0-rc.1` — preview release
+- Kind: bar-widget; entry point: `BarWidget.qml`; panel owned internally
 - Category: Hardware
-- Tags: trackball, bluetooth, logitech, input, battery
-- Preview: `assets/preview.png`
+- Allowed tags: bar, hyprland, quickshell
+- Preview: `preview.png` (recorded inert offscreen example)
 
 ## Description
 
-Connection status, approximate battery reporting, a five-button assignment diagram and Hyprland pointer controls for the Logitech MX Ergo. The panel follows the Omarchy theme and supports ten interface languages.
+Approximate battery categories, named five-button profiles, keyboard profile
+switching, target-only Bluetooth recovery and Hyprland pointer controls for the
+Logitech MX Ergo. Ten interface languages and native Omarchy theme controls.
 
 ## Dependencies and privileges
 
-Requires Omarchy Quattro, Quickshell Bluetooth/UPower, BlueZ, UPower, the tested Hyprland Lua interface, Python 3 and `dbus-monitor`. Some actions need `wtype`, `playerctl`, `wpctl`, Voxtype, Overview or the TTS plugin. The README lists shortcut compatibility aliases.
+Requires Omarchy Quattro, Quickshell Bluetooth/UPower, BlueZ/bluez-utils, UPower,
+the tested Hyprland Lua interface, Python 3 and `dbus-monitor`. Some actions need
+`wtype`, `playerctl`, `wpctl`, Voxtype, Overview or the TTS plugin. The usage guide
+lists compatibility aliases and optional dependencies.
 
-Ordinary functionality runs with user permissions inside the unsandboxed shared shell. An optional Bluetooth controller profile requires separate manual installation of a root-owned helper and an explicit Polkit administrator prompt for changes. It changes controller intervals and USB power management, persists after plugin removal, and affects other devices on that controller. It does not increase radio power or guarantee smoother input. No plugin downloads, remote builds or network requests are performed.
+The plugin runs unsandboxed as the user. Custom Command actions intentionally
+execute shell commands; button bindings are global. The optional root-owned
+Bluetooth helper is installed separately and uses explicit Polkit authorization.
+Ordinary functionality needs no administrator helper or build toolchain. No
+plugin downloads, remote builds or network calls are performed.
 
-## Limitations
+## Evidence and limits
 
-Charge values are approximate; no exact percentage or battery-health guarantee. Pointer settings are per device, but button bindings are global in Hyprland. The optional helper has recovery and removal instructions; target-hardware acceptance remains pending. The privileged boundary and user-session candidate have scoped independent source reviews. This is a community plugin, not an official Logitech application.
+The complete local suite passes on Omarchy 4.5.0rc1 and Qt 6.12.0, including 103
+profile/editor interactions and the unchanged historical Backtab assertion.
+See [current release evidence](release-1.1.0-rc.1.md). Earlier source reviews apply
+only to their recorded snapshots. Physical mouse behavior, native accessibility,
+sleep/wake, multi-monitor and optional controller writes remain unverified in
+this release pass. Charge precision and measured latency benefits are unavailable.
 
-## Validation
-
-All nine local test stages pass, including isolated profile/recovery/persistence tests and offscreen diagram interactions. The live panel loads on the recorded host. See `RELEASE-REVIEW.md` for source hashes, installed-helper identity and explicit untested limits.
-
-## Submission route
-
-Recheck https://plugins.omarchy.org/publish.html immediately before submission. The guide links a GitHub issue form; preparing this draft does not authorize opening or submitting it, pushing the candidate, or creating a release.
+The current catalog does not contain this plugin ID. A GitHub release does not
+create a Marketplace listing. Submission uses the live upstream SUBMISSION.md
+format and needs maintainer approval before the public card becomes available.
+The live card/copy installation path remains pending until publication there.

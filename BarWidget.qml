@@ -77,7 +77,7 @@ Panel {
     panelOpen: root.opened
     onLocaleRequested: function(code) {
       if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function") {
-        var entry = Object.assign({}, root.currentSettings || {}, {
+        let entry = Object.assign({}, root.currentSettings || {}, {
           id: root.moduleName,
           locale: code
         })

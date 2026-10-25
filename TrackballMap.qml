@@ -36,7 +36,7 @@ Item {
   })
 
   function buttonInfo(key) {
-    for (var i = 0; i < buttons.length; ++i) {
+    for (let i = 0; i < buttons.length; ++i) {
       if (buttons[i].key === key) return buttons[i]
     }
     return { key: key, label: "", action: "" }

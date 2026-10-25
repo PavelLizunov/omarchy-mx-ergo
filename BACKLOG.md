@@ -1,12 +1,14 @@
 # Development status
 
-The plugin remains a development candidate (manifest `1.0.0`). Marketplace preparation is local; no submission approval is implied.
+The plugin is a preview release candidate (manifest `1.1.0-rc.1`). The owner requested verification and publication on 25 October 2026. GitHub release publication and Marketplace approval are separate outcomes. See [current release evidence](docs/release-1.1.0-rc.1.md).
 
 ## Implemented with local checks
 
-The 2026-10-08 original working-tree baseline passed the Python, JavaScript,
-manifest and QML lint checks, but failed the offscreen profile-form Backtab focus
-assertion at `tests/profiles-ui/tst_editor.qml:942`. This is not an all-green gate.
+The 2026-10-08 original working-tree baseline failed the offscreen profile-form
+Backtab assertion at `tests/profiles-ui/tst_editor.qml:942`. On 25 October, the
+complete suite passes on Omarchy 4.5.0rc1 / Qt 6.12.0, including that unchanged
+assertion and 103 profile/editor cases. This does not establish which host change
+resolved the earlier failure or prove native hardware acceptance.
 
 - Reactive BlueZ/UPower telemetry with HID identity matching and explicit unknown/disconnected states.
 - Approximate battery categories; no fabricated percentages or full-battery gauge.
@@ -27,14 +29,15 @@ Earlier independent helper and QML reviews are historical evidence in
 [the dated release review](RELEASE-REVIEW.md), not acceptance of today's dirty
 working tree. Re-establish them on the actual release candidate.
 
-- [ ] Diagnose and resolve the original profile-form Backtab focus failure without weakening the assertion.
-- [ ] Re-establish current-candidate independent static review and a green complete test gate.
+- [x] Recheck the original profile-form Backtab failure: unchanged assertion passes on the current Qt host; earlier cause remains unconfirmed.
+- [x] Complete local test gate passes, including QML lint and 103 profile/editor cases.
+- [ ] Re-establish current-candidate independent static review (not performed in this release pass).
 - [ ] Native end-to-end keyboard/accessibility review across pages and language picker.
 - [ ] Multi-monitor, vertical bar, display hotplug and additional scale checks.
 - [ ] Live optional-profile enable/restore and udev reapply on an authorized test adapter. Installation alone does not establish those results.
 - [ ] Legacy profile migration on the development machine requires recognized-rule cleanup followed by a computer restart; original values were not recorded by the old code.
 - [ ] Recheck the earlier report of text appearing over the plugin during prolonged use; current screenshots alone cannot establish its cause.
-- [ ] Freeze the reviewed commit, push with approval, then submit the exact candidate with approval.
+- [ ] Record exact GitHub release commit and publication outcome. Marketplace submission remains a separate listing action.
 
 ## Documented limitations
 

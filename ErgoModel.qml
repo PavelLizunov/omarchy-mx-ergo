@@ -197,7 +197,7 @@ QtObject {
     root.storeActiveProfile()
     var base = "profile-" + Date.now().toString(36)
     var id = base
-    for (var serial = 1; Profiles.find(root.buttonProfiles, id); serial++) id = base + "-" + serial
+    for (let serial = 1; Profiles.find(root.buttonProfiles, id); serial++) id = base + "-" + serial
     var item = Profiles.profile(id, value, root.captureButtonProfile())
     root.buttonProfiles = root.buttonProfiles.concat([item])
     return root.selectProfile(id)
@@ -256,7 +256,6 @@ QtObject {
   }
 
   property Timer profileWheelLatch: Timer {
-    id: profileWheelLatch
     interval: 750
     repeat: false
   }
@@ -328,11 +327,11 @@ QtObject {
     var list = btDevicesList
     var target = root.targetAddress.toUpperCase().replace(/:/g, "")
     var matches = []
-    for (var i = 0; i < list.length; i++) {
-      var d = list[i]
+    for (let i = 0; i < list.length; i++) {
+      let d = list[i]
       if (!d) continue
-      var addr = String(d.address || "").toUpperCase().replace(/:/g, "")
-      var name = String(d.name || d.deviceName || "")
+      let addr = String(d.address || "").toUpperCase().replace(/:/g, "")
+      let name = String(d.name || d.deviceName || "")
       if ((target !== "" && addr === target) || (target === "" && name.indexOf("MX Ergo") !== -1)) {
         matches.push(d)
       }
@@ -607,8 +606,8 @@ QtObject {
   function updateRecoveryOtherState() {
     if (root.recoveryOtherAddress === "" || root.recoveryOtherMultiple) return
     var list = root.btDevicesList
-    for (var i = 0; i < list.length; i++) {
-      var device = list[i]
+    for (let i = 0; i < list.length; i++) {
+      let device = list[i]
       if (device && String(device.address || "").toUpperCase() === root.recoveryOtherAddress) {
         root.recoveryOtherPaired = !!device.paired
         root.recoveryOtherBonded = !!device.bonded
@@ -657,8 +656,8 @@ QtObject {
       return
     }
     var list = root.btDevicesList
-    for (var i = 0; i < list.length; i++) {
-      var device = list[i]
+    for (let i = 0; i < list.length; i++) {
+      let device = list[i]
       if (device && String(device.address || "").toUpperCase() === address
           && /MX Ergo/i.test(String(device.name || device.deviceName || ""))) {
         root.noteRecoveryOtherAddress(address)
@@ -699,7 +698,6 @@ QtObject {
   }
 
   property Timer recoveryStepTimer: Timer {
-    id: recoveryStepTimer
     repeat: false
     onTriggered: {
       if (root.recoveryStage === "disconnecting") {
@@ -719,7 +717,6 @@ QtObject {
   // bluetoothctl owns one BlueZ discovery session even if another client scans.
   // SIGTERM closes only this child's session; never write adapter.discovering.
   property Process recoveryScanProcess: Process {
-    id: recoveryScanProcess
     command: ["/usr/bin/bluetoothctl", "--timeout", "65", "scan", "le"]
     stdout: SplitParser { onRead: function(line) { root.handleRecoveryScanLine(line) } }
     stderr: SplitParser { onRead: function(line) { root.handleRecoveryScanLine(line) } }
@@ -735,7 +732,6 @@ QtObject {
   }
 
   property Process recoveryCancelProcess: Process {
-    id: recoveryCancelProcess
     onExited: function(exitCode) {
       if (root.recoveryStage === "cancellingConnect") {
         if (exitCode !== 0) root.finishRecovery("recovery_cancel_unconfirmed")
@@ -748,7 +744,6 @@ QtObject {
   }
 
   property Timer recoveryCleanupTimer: Timer {
-    id: recoveryCleanupTimer
     interval: 2000
     repeat: false
     onTriggered: {
@@ -877,7 +872,7 @@ QtObject {
     root.lowLatencyHelperAvailable = false
     root.lowLatencyCanRestore = false
     root.lowLatencyLegacy = false
-    lowLatencyCheck.adapterAtStart = root.bluetoothAdapter
+    latencyStatusProcess.adapterAtStart = root.bluetoothAdapter
     lowLatencyCheck.command = [root.lowLatencyScript, "--status", root.bluetoothAdapter || "-"]
     lowLatencyCheck.running = true
   }
@@ -908,16 +903,16 @@ QtObject {
   }
 
   property Process lowLatencyCheck: Process {
-    id: lowLatencyCheck
+    id: latencyStatusProcess
     property string adapterAtStart: ""
     onExited: {
       if (adapterAtStart !== root.bluetoothAdapter) Qt.callLater(root.checkLowLatency)
     }
     stdout: StdioCollector {
       onStreamFinished: {
-        if (lowLatencyCheck.adapterAtStart !== root.bluetoothAdapter || root.lowLatencyBusy) return
+        if (latencyStatusProcess.adapterAtStart !== root.bluetoothAdapter || root.lowLatencyBusy) return
         try {
-          var result = JSON.parse(text)
+          let result = JSON.parse(text)
           root.lowLatencyHelperAvailable = result.version === 1 && result.helperAvailable === true
           root.lowLatencyCanRestore = result.canRestore === true
           root.lowLatencyLegacy = result.state === "legacy"
@@ -1122,11 +1117,11 @@ QtObject {
 
   function actionLabel(action, btnKey) {
     if (action === "custom_shortcut") {
-      var s = getCustomShortcut(btnKey)
+      let s = getCustomShortcut(btnKey)
       return s !== "" ? s : I18n.t("tab_shortcut", root.effectiveLanguage)
     }
     if (action === "custom_command") {
-      var c = getCustomCommand(btnKey)
+      let c = getCustomCommand(btnKey)
       return c !== "" ? c : I18n.t("tab_command", root.effectiveLanguage)
     }
     return I18n.t("action_" + action, root.effectiveLanguage)
@@ -1145,8 +1140,8 @@ QtObject {
     var mods = []
     var releaseMods = []
     var keys = []
-    for (var i = 0; i < tokens.length; i++) {
-      var t = tokens[i].toUpperCase()
+    for (let i = 0; i < tokens.length; i++) {
+      let t = tokens[i].toUpperCase()
       if (t === "CTRL" || t === "CONTROL") {
         mods.push("-M ctrl")
         releaseMods.unshift("-m ctrl")
@@ -1165,10 +1160,10 @@ QtObject {
     }
     if (keys.length === 0) return ""
     var cmd = "wtype -s 25 -d 20"
-    for (var m = 0; m < mods.length; m++) cmd += " " + mods[m]
-    for (var k = 0; k < keys.length; k++) {
-      var key = keys[k]
-      var uKey = key.toUpperCase()
+    for (let m = 0; m < mods.length; m++) cmd += " " + mods[m]
+    for (let k = 0; k < keys.length; k++) {
+      let key = keys[k]
+      let uKey = key.toUpperCase()
       if (key.length === 1) {
         cmd += " -k " + shellQuote(key.toLowerCase())
       } else if (uKey === "SPACE") {
@@ -1211,7 +1206,7 @@ QtObject {
         cmd += " -k " + shellQuote(key)
       }
     }
-    for (var r = 0; r < releaseMods.length; r++) cmd += " " + releaseMods[r]
+    for (let r = 0; r < releaseMods.length; r++) cmd += " " + releaseMods[r]
     return cmd
   }
 
@@ -1239,8 +1234,8 @@ QtObject {
     if (action === "default") {
       return lua
     } else if (action === "profile_next") {
-      var axis = code === "mouse_left" || code === "mouse_right"
-      var command = "omarchy-shell io.github.pavellizunov.mx-ergo " + (axis ? "nextProfileFromWheel" : "nextProfile")
+      let axis = code === "mouse_left" || code === "mouse_right"
+      let command = "omarchy-shell io.github.pavellizunov.mx-ergo " + (axis ? "nextProfileFromWheel" : "nextProfile")
       lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: Next Profile\", " + JSON.stringify(command)
         + ", { release = " + (axis ? "false" : "true") + " })\n"
     } else if (action === "workspace_next") {
@@ -1276,10 +1271,10 @@ QtObject {
     } else if (action === "browser_forward") {
       lua += "o.bind(\"" + code + "\", \"MX Ergo: Browser Forward\", \"wtype -M alt -k Right\")\n"
     } else if (action === "custom_shortcut") {
-      var sc = buttonProfile ? buttonProfile.customShortcuts[btnKey] : getCustomShortcut(btnKey)
+      let sc = buttonProfile ? buttonProfile.customShortcuts[btnKey] : getCustomShortcut(btnKey)
       if (sc !== "") {
-        var norm = sc.toUpperCase().replace(/,/g, " ").replace(/\+/g, " ").trim().replace(/\s+/g, " ")
-        var wsMatch = norm.match(/^(SUPER|WIN|LOGO)\s+([0-9]+)$/)
+        let norm = sc.toUpperCase().replace(/,/g, " ").replace(/\+/g, " ").trim().replace(/\s+/g, " ")
+        let wsMatch = norm.match(/^(SUPER|WIN|LOGO)\s+([0-9]+)$/)
         if (wsMatch) {
           lua += "o.bind(" + JSON.stringify(code) + ", " + JSON.stringify("MX Ergo: Workspace " + wsMatch[2]) + ", hl.dsp.focus({ workspace = \"" + wsMatch[2] + "\" }))\n"
         } else if (norm === "SUPER CTRL TAB" || norm === "SUPER CONTROL TAB" || norm === "WIN CTRL TAB" || norm === "WIN CONTROL TAB") {
@@ -1319,14 +1314,14 @@ QtObject {
         } else if (norm === "SUPER ALT R" || norm === "WIN ALT R") {
           lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: TTS Snip\", " + JSON.stringify(shellQuote(root.configHome + "/omarchy/plugins/io.github.hikari112.tts/bin/speak") + " --snip") + ")\n"
         } else {
-          var wcmd = shortcutToWtype(sc)
+          let wcmd = shortcutToWtype(sc)
           if (wcmd !== "") {
             lua += "o.bind(" + JSON.stringify(code) + ", " + JSON.stringify("MX Ergo: " + sc) + ", " + JSON.stringify(wcmd) + ")\n"
           }
         }
       }
     } else if (action === "custom_command") {
-      var rawCmd = buttonProfile ? buttonProfile.customCommands[btnKey] : getCustomCommand(btnKey)
+      let rawCmd = buttonProfile ? buttonProfile.customCommands[btnKey] : getCustomCommand(btnKey)
       if (rawCmd !== "") {
         lua += "o.bind(" + JSON.stringify(code) + ", \"MX Ergo: Command\", " + JSON.stringify(rawCmd) + ")\n"
       }
@@ -1341,9 +1336,9 @@ QtObject {
     var selected = tx ? Profiles.find(root.buttonProfiles, tx.rollback ? tx.fromId : tx.toId) : null
     var lua = "do\n"
     if (root.hyprDeviceName !== "") {
-      var sensitivity = Number(root.sensitivity)
+      let sensitivity = Number(root.sensitivity)
       if (!isFinite(sensitivity)) throw new Error("Invalid sensitivity")
-      var profile = root.accelProfile
+      let profile = root.accelProfile
       if (profile !== "adaptive" && profile !== "flat") throw new Error("Invalid acceleration profile")
       lua += "hl.device({ name = " + JSON.stringify(root.hyprDeviceName)
         + ", sensitivity = " + Math.max(-1, Math.min(1, sensitivity)).toFixed(2)
@@ -1353,12 +1348,12 @@ QtObject {
     var buttons = { "mouse:275": "back", "mouse:276": "forward", "mouse:274": "middle",
       "mouse_left": "tiltLeft", "mouse:278": "tiltLeft", "mouse_right": "tiltRight", "mouse:279": "tiltRight" }
     var expected = {}
-    for (var code in buttons) {
-      var key = buttons[code]
-      var action = selected ? selected.buttons[key] : getButtonAction(key)
-      var snippet = buildBindSnippet(code, action, key, selected)
+    for (let code in buttons) {
+      let key = buttons[code]
+      let action = selected ? selected.buttons[key] : getButtonAction(key)
+      let snippet = buildBindSnippet(code, action, key, selected)
       // Read the description from the same generated bind, including JSON escapes.
-      var match = snippet.match(/o\.bind\([^,]+,\s*("(?:\\.|[^"\\])*")/)
+      let match = snippet.match(/o\.bind\([^,]+,\s*("(?:\\.|[^"\\])*")/)
       expected[code] = match ? JSON.parse(match[1]) : null
       if (action === "profile_next") expected[code] = {description: expected[code], release: code !== "mouse_left" && code !== "mouse_right",
         dispatcher: "__lua"}
@@ -1424,7 +1419,7 @@ QtObject {
     var ok = false
     var error = ""
     try {
-      var result = JSON.parse(settingsOutput)
+      let result = JSON.parse(settingsOutput)
       ok = settingsExitCode === 0 && result.ok === true
       error = result.error || ""
     } catch (_) {}
@@ -1441,7 +1436,6 @@ QtObject {
   }
 
   property Process settingsApplier: Process {
-    id: settingsApplier
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.settingsOutput = text.length <= 1024 ? text : ""
@@ -1455,12 +1449,10 @@ QtObject {
     }
   }
   property Timer settingsStartCheck: Timer {
-    id: settingsStartCheck
     interval: 1000
     onTriggered: root.finishSettingsApply()
   }
   property Timer settingsDeadline: Timer {
-    id: settingsDeadline
     interval: 60000
     onTriggered: {
       if (settingsApplier.running && settingsApplier.processId > 0) {
@@ -1523,7 +1515,6 @@ QtObject {
     configWriteStartCheck.restart()
   }
   property Process configWriter: Process {
-    id: configWriter
     onExited: function(exitCode) {
       root.finishConfigWrite(exitCode)
     }
@@ -1550,12 +1541,10 @@ QtObject {
     }
   }
   property Timer configWriteStartCheck: Timer {
-    id: configWriteStartCheck
     interval: 1000
     onTriggered: if (root.configWriting && !configWriter.running) root.finishConfigWrite(-1)
   }
   property Timer configReadStartCheck: Timer {
-    id: configReadStartCheck
     interval: 1000
     onTriggered: {
       if (!configLoader.running && !root.configReadComplete) {
@@ -1567,7 +1556,6 @@ QtObject {
 
   // Config loader process (discrete argv, no shell interpreter)
   property Process configLoader: Process {
-    id: configLoader
     command: ["/usr/bin/python3", "-I", root.configHelper, "read", root.configPath]
     onExited: function(exitCode) {
       configReadStartCheck.stop()
@@ -1582,7 +1570,7 @@ QtObject {
         var txt = (text || "").trim()
         if (!txt) return
         try {
-          var cfg = JSON.parse(txt)
+          let cfg = JSON.parse(txt)
           if (!cfg) return // First install: do not overwrite existing compositor bindings.
           if (typeof cfg.sensitivity === "number") root.sensitivity = cfg.sensitivity
           if (typeof cfg.accelProfile === "string") root.accelProfile = cfg.accelProfile
@@ -1600,7 +1588,6 @@ QtObject {
 
   // System sleep/resume monitor (logind PrepareForSleep signal listener)
   property Process sleepMonitor: Process {
-    id: sleepMonitor
     command: [
       "/usr/bin/dbus-monitor", "--system",
       "type='signal',sender='org.freedesktop.login1',path='/org/freedesktop/login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
@@ -1641,7 +1628,6 @@ QtObject {
     if (root.sleepMonitorRestarts < 3) sleepRetry.restart()
   }
   property Timer sleepRetry: Timer {
-    id: sleepRetry
     interval: 2000
     onTriggered: {
       if (root.shuttingDown || sleepMonitor.running) return
@@ -1651,7 +1637,6 @@ QtObject {
     }
   }
   property Timer sleepStartCheck: Timer {
-    id: sleepStartCheck
     interval: 1000
     onTriggered: {
       if (!sleepMonitor.running) root.scheduleSleepMonitorRetry()
@@ -1662,7 +1647,6 @@ QtObject {
   // One owned, bounded scan after startup; a live or manually repaired link
   // consumes the opportunity so an ordinary later disconnect does not scan.
   property Timer startupRecoveryTimer: Timer {
-    id: startupRecoveryTimer
     interval: 5000
     repeat: false
     onTriggered: root.startStartupRecovery()
@@ -1670,7 +1654,6 @@ QtObject {
 
   // Bounded reconnection attempts after the controller has had time to resume.
   property Timer wakeReconnectTimer: Timer {
-    id: wakeReconnectTimer
     interval: 2000
     repeat: false
     onTriggered: {
@@ -1686,7 +1669,6 @@ QtObject {
   }
 
   property Timer wakeStage2Timer: Timer {
-    id: wakeStage2Timer
     interval: 10000
     repeat: false
     onTriggered: {
@@ -1696,7 +1678,6 @@ QtObject {
     }
   }
   property Timer wakeRetryDeadline: Timer {
-    id: wakeRetryDeadline
     interval: 60000
     repeat: false
     onTriggered: { root.wakeRetryDevice = null }

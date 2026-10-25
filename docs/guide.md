@@ -2,7 +2,7 @@
 
 # Logitech MX Ergo Trackball Plugin for Omarchy Quattro
 
-> **Status: Work in progress / В разработке.** This is a development snapshot, not a stable release. The manifest currently reports `1.0.0`; that number does not indicate production readiness. See [known limitations](#known-limitations) before trying it.
+> **Status: 1.1.0-rc.1 preview release / Предварительный выпуск.** The complete local suite passes on the recorded host. Native hardware and broader lifecycle acceptance remain incomplete. See [release evidence](release-1.1.0-rc.1.md) and [known limitations](#known-limitations) before trying it.
 
 A hardware plugin for Omarchy Quattro shell designed for the **Logitech MX Ergo** multi-device wireless trackball connected via Bluetooth BLE or Logitech Unifying Receiver.
 

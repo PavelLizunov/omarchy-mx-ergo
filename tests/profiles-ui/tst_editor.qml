@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import qs.Commons
+import qs.Commons as Commons
 import "../.." as Plugin
 import "../../I18n.js" as I18n
 
@@ -19,8 +20,8 @@ TestCase {
 
   QtObject {
     id: bar
-    property color foreground: Color.foreground
-    property color accent: Color.accent
+    property color foreground: Commons.Color.foreground
+    property color accent: Commons.Color.accent
     property string fontFamily: Style.font.family
   }
   QtObject {
@@ -130,7 +131,7 @@ TestCase {
     id: surface
     width: Math.min(editor.preferredWidth, testCase.availableWidth) - editor.panelInset
     height: editor.height
-    color: Color.popups.background
+    color: Commons.Color.popups.background
     Plugin.ErgoPanel {
       id: editor
       objectName: "consumerEditor"
@@ -1035,10 +1036,10 @@ TestCase {
   function test_font_and_palette(data) {
     try {
       Style.fontBaseSize = data.font
-      Color.foreground = data.foreground
-      Color.background = data.background
-      Color.accent = data.foreground
-      Color.popups.background = data.background
+      Commons.Color.foreground = data.foreground
+      Commons.Color.background = data.background
+      Commons.Color.accent = data.foreground
+      Commons.Color.popups.background = data.background
       testCase.width = 1100
       testCase.availableWidth = 1100
       testCase.height = 900
@@ -1061,22 +1062,22 @@ TestCase {
         verify(control !== null, name + ": control exists")
         verifyWrappedCaption(control)
         var label = labelFor(control, control.caption)
-        verify(contrast(label.color, composite(control.color, Color.popups.background)) >= 4.5,
+        verify(contrast(label.color, composite(control.color, Commons.Color.popups.background)) >= 4.5,
           name + ": text contrast against actual control fill")
       })
       var apply = findChild(editor, "assignmentShortcutApply")
       apply.forceActiveFocus()
       wait(20)
       verify(apply.activeFocus && apply._showFocusRing)
-      verify(contrast(labelFor(apply, apply.caption).color, composite(apply.color, Color.popups.background)) >= 4.5)
+      verify(contrast(labelFor(apply, apply.caption).color, composite(apply.color, Commons.Color.popups.background)) >= 4.5)
       compare(surface.width, frame.width)
       compare(surface.height, frame.height)
     } finally {
       Style.fontBaseSize = 12
-      Color.foreground = "#cacccc"
-      Color.background = "#101315"
-      Color.accent = "#cacccc"
-      Color.popups.background = Color.background
+      Commons.Color.foreground = "#cacccc"
+      Commons.Color.background = "#101315"
+      Commons.Color.accent = "#cacccc"
+      Commons.Color.popups.background = Commons.Color.background
       testCase.width = 780
     }
   }

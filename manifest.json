@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.pavellizunov.mx-ergo",
   "name": "Logitech MX Ergo",
-  "version": "1.0.0",
+  "version": "1.1.0-rc.1",
   "author": "PavelLizunov",
   "license": "MIT",
-  "description": "Battery status, connection monitor, and Hyprland pointer controls for Logitech MX Ergo trackball.",
+  "description": "Battery categories, named button profiles, Bluetooth recovery, and Hyprland pointer controls for Logitech MX Ergo.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Logitech MX Ergo",
-    "description": "Battery status, connection monitor, and Hyprland pointer controls for Logitech MX Ergo trackball.",
+    "description": "Battery categories, named button profiles, Bluetooth recovery, and Hyprland pointer controls for Logitech MX Ergo.",
     "category": "Hardware",
     "allowMultiple": false,
     "defaultSection": "right",

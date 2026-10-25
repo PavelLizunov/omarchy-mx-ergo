@@ -25,6 +25,12 @@ with tempfile.TemporaryDirectory(prefix='mx-profile-ui-') as temporary:
     imports = Path(temporary)
     for name in ('Commons', 'Ui'):
         shutil.copytree(Path('/usr/share/omarchy/shell') / name, imports / 'qs' / name)
+    # Keep the actual visual theme helpers, not unrelated runtime singletons.
+    directory = imports / 'qs/Commons/qmldir'
+    directory.write_text('\n'.join(line for line in directory.read_text().splitlines()
+        if line == 'module qs.Commons' or any(
+            line.startswith('singleton ' + name + ' ') for name in ('Border', 'Color', 'Style', 'Util')))
+        + '\n')
     for name, boundary in [('Style', '  property Process hyprctlProc:'),
                            ('Color', '  property FileView colorsFile:')]:
         file = imports / 'qs/Commons' / (name + '.qml')
@@ -32,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='mx-profile-ui-') as temporary:
         if boundary not in source:
             raise RuntimeError('Installed shell theme structure changed: ' + name)
         source = source[:source.index(boundary)] + '}\n'
-        source = re.sub(r'^import Quickshell(?:\.Io)?\n', '', source, flags=re.M)
+        source = re.sub(r'^import Quickshell(?:\.[A-Za-z]+)?\n', '', source, flags=re.M)
         source = re.sub(r'Quickshell\.env\("[A-Z_]+"\)', '""', source)
         file.write_text(source)
     util = imports / 'qs/Commons/Util.qml'
