@@ -63,7 +63,7 @@ Panel {
     }
   }
 
-  readonly property bool hideWhenDisconnected: root.currentSetting("hideWhenDisconnected", false)
+  readonly property bool hideWhenDisconnected: root.currentSetting("hideWhenDisconnected", true)
   readonly property bool vertical: root.bar ? root.bar.vertical : false
 
   ErgoModel {

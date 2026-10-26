@@ -21,7 +21,7 @@
     "defaults": {
       "deviceAddress": "",
       "hyprDeviceName": "logitech-mx-ergo-multi-device-trackball-",
-      "hideWhenDisconnected": false,
+      "hideWhenDisconnected": true,
       "sensitivity": 0.0,
       "accelProfile": "adaptive",
       "naturalScroll": false,
@@ -38,7 +38,7 @@
         "key": "hideWhenDisconnected",
         "type": "boolean",
         "label": "Hide indicator when trackball is disconnected",
-        "defaultValue": false
+        "defaultValue": true
       },
       {
         "key": "deviceAddress",

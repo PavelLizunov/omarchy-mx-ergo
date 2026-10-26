@@ -26,6 +26,11 @@ This is an offscreen example, not a desktop or hardware verification.
 - Bounded settings recovery after configuration reload, startup and wake.
 - Ten interface languages and native Omarchy theme controls.
 
+The bar indicator is hidden while disconnected by default. The widget setting
+`hideWhenDisconnected` can keep it visible; an explicitly saved `false` is
+preserved. When hidden, open the panel with
+`omarchy-shell io.github.pavellizunov.mx-ergo open` to access recovery controls.
+
 Detailed behavior and screenshots are in the [usage guide](docs/guide.md).
 
 ## Installation and removal
